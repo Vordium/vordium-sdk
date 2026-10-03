@@ -1,0 +1,29 @@
+{
+  "cases": [
+    {
+      "cancel_at_ms": 1800000060000,
+      "digest": "0x51a10b97a9af206675494da0b19d829de514b585c4c6e9e3810bba90440c56e8",
+      "nonce": 1,
+      "owner": "0x1111111111111111111111111111111111111111",
+      "struct_hash": "0xf0e25dd9011650f6fd7b3cc7d2b8b97c72436464ceab84cd2974e0235fb6cc13"
+    },
+    {
+      "cancel_at_ms": 0,
+      "digest": "0xb9ef9b07c12b8ae56e12b670c88d6086cfb7611877785a3341afcbacffbe5b4c",
+      "nonce": 7,
+      "owner": "0xa267e4f15c979289993a95e22ca9cdf077b708ba",
+      "struct_hash": "0x0c8e630f41d91174a76385cf40060c23b46b6890c6a9a7c8025ce993004766fb"
+    },
+    {
+      "cancel_at_ms": 18446744073709551615,
+      "digest": "0x23aa05a2ecb10aa2586b8717c117f264a9dcd7e2b75ffb9b50a18d63675a09b1",
+      "nonce": 18446744073709551615,
+      "owner": "0xffffffffffffffffffffffffffffffffffffffff",
+      "struct_hash": "0x5416c7f32b92d629ca2f7f7904729e39c84c415ef00c94807b2bcf6690abc408"
+    }
+  ],
+  "chain_id": 101101,
+  "domain_separator": "0x68b86feeb9a9d9d471c3355da4719f2ce6a2330fbde6dad54d815783dacab34b",
+  "genesis_sha256": "2c1c0679fa6ab8358f1d3e8d294a8d1c73ac2e2caf9079f1216abedc3d9fdf4f",
+  "type_hash": "0x61a492faa8124a492b90f62ff3aff1fc037e45fe380455034a53f7cc1026be42"
+}
