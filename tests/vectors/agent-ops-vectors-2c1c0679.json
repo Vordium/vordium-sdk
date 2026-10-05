@@ -1,0 +1,376 @@
+{
+ "network": {
+  "chainId": 101101,
+  "genesis_sha256": "2c1c0679fa6ab8358f1d3e8d294a8d1c73ac2e2caf9079f1216abedc3d9fdf4f"
+ },
+ "test_keys": {
+  "owner": {
+   "private_key": "0x0ba9e90da38e10d38b665eab483937922935bf861abf17a28e6e1b83af21c1f1"
+  },
+  "agent": {
+   "private_key": "0x4b428633717bae00c74e8043c7112cf01d87852dad15cdcd7ba0bd2bdd6106b7"
+  }
+ },
+ "domain": {
+  "name": "VordCore",
+  "version": "1",
+  "chainId": 101101,
+  "verifyingContract": "0x0000000000000000000000000000000000001002",
+  "salt": "0x8590981a62e73d4fe04427a68536a1a63f3acb4765e41116859ab126c20099a2",
+  "domainSeparator": "0x68b86feeb9a9d9d471c3355da4719f2ce6a2330fbde6dad54d815783dacab34b"
+ },
+ "types": {
+  "RegisterAgent": {
+   "typeHash": "0x8cf38c34ee3c36ffb16efd222d4f5e1efd0fcbd957149f7d51054cd758802eb7",
+   "fields": [
+    {
+     "name": "owner",
+     "type": "address"
+    },
+    {
+     "name": "agent",
+     "type": "address"
+    },
+    {
+     "name": "mandate",
+     "type": "string"
+    },
+    {
+     "name": "expiresMs",
+     "type": "uint64"
+    },
+    {
+     "name": "nonce",
+     "type": "uint64"
+    }
+   ]
+  },
+  "RevokeAgent": {
+   "typeHash": "0x4154922dd73edc41f86303d2b9cea214a3f615b97f96b4c900bb2466093c9d6b",
+   "fields": [
+    {
+     "name": "owner",
+     "type": "address"
+    },
+    {
+     "name": "agent",
+     "type": "address"
+    },
+    {
+     "name": "nonce",
+     "type": "uint64"
+    }
+   ]
+  },
+  "SetAgentPolicy": {
+   "typeHash": "0x709e529253aa1cf9c4df2023201702158cdf57e0db7c13061b55d608c8e41062",
+   "fields": [
+    {
+     "name": "owner",
+     "type": "address"
+    },
+    {
+     "name": "agent",
+     "type": "address"
+    },
+    {
+     "name": "capsBitmask",
+     "type": "uint32"
+    },
+    {
+     "name": "sideMode",
+     "type": "uint8"
+    },
+    {
+     "name": "maxTotalNotional6dec",
+     "type": "uint128"
+    },
+    {
+     "name": "maxLeverageOverallBps",
+     "type": "uint32"
+    },
+    {
+     "name": "dailyLossLimit6dec",
+     "type": "uint128"
+    },
+    {
+     "name": "drawdownBps",
+     "type": "uint32"
+    },
+    {
+     "name": "feeCapWindow6dec",
+     "type": "uint128"
+    },
+    {
+     "name": "opsPerWindow",
+     "type": "uint64"
+    },
+    {
+     "name": "windowLenMs",
+     "type": "uint64"
+    },
+    {
+     "name": "activeFromMsOfDay",
+     "type": "uint32"
+    },
+    {
+     "name": "activeToMsOfDay",
+     "type": "uint32"
+    },
+    {
+     "name": "expiresMs",
+     "type": "uint64"
+    },
+    {
+     "name": "enabled",
+     "type": "bool"
+    },
+    {
+     "name": "nonce",
+     "type": "uint64"
+    }
+   ]
+  },
+  "SetAgentMarketLimit": {
+   "typeHash": "0xa92024caa69fea81f74d011b60f08398301d0d1fbb70a3f8e2933bde18e82be7",
+   "fields": [
+    {
+     "name": "owner",
+     "type": "address"
+    },
+    {
+     "name": "agent",
+     "type": "address"
+    },
+    {
+     "name": "pair",
+     "type": "uint32"
+    },
+    {
+     "name": "allowed",
+     "type": "bool"
+    },
+    {
+     "name": "maxOrder18dec",
+     "type": "uint128"
+    },
+    {
+     "name": "maxPosition18dec",
+     "type": "uint128"
+    },
+    {
+     "name": "maxLeverageBps",
+     "type": "uint32"
+    },
+    {
+     "name": "nonce",
+     "type": "uint64"
+    }
+   ]
+  }
+ },
+ "canonical_vectors": {
+  "vectors": [
+   {
+    "op": "RegisterAgent",
+    "message": {
+     "owner": "0x1111111111111111111111111111111111111111",
+     "agent": "0x2222222222222222222222222222222222222222",
+     "mandate": "mm",
+     "expiresMs": "1",
+     "nonce": "7"
+    },
+    "structHash": "0x436f92c5fd5b369e7d72721315c7ab8776e4e6e463e97bcf0a05452ff049d614",
+    "digest": "0xe6ed20348cef1318aa22ecbd0ab8d5d558b12f89c63d0b20dcddb0480c47f807"
+   },
+   {
+    "op": "RevokeAgent",
+    "message": {
+     "owner": "0x1111111111111111111111111111111111111111",
+     "agent": "0x2222222222222222222222222222222222222222",
+     "nonce": "7"
+    },
+    "structHash": "0xe32c7a6fd0eb1252a493ef28dcdb437deb56ae9fde0a12bc502f591aa1b33ca1",
+    "digest": "0xbcce8fcdd04c99d6a396900664fe59e1fb1b8149a879f00269d27f6831b0de8c"
+   },
+   {
+    "op": "SetAgentPolicy",
+    "message": {
+     "owner": "0x1111111111111111111111111111111111111111",
+     "agent": "0x2222222222222222222222222222222222222222",
+     "capsBitmask": "3",
+     "sideMode": "0",
+     "maxTotalNotional6dec": "1000000",
+     "maxLeverageOverallBps": "50000",
+     "dailyLossLimit6dec": "500000",
+     "drawdownBps": "1000",
+     "feeCapWindow6dec": "100000",
+     "opsPerWindow": "100",
+     "windowLenMs": "86400000",
+     "activeFromMsOfDay": "0",
+     "activeToMsOfDay": "0",
+     "expiresMs": "9999999999",
+     "enabled": true,
+     "nonce": "7"
+    },
+    "structHash": "0xf44ce47c23da2340527551634aaacf06c591ff31f8343592e2d49bbe5aa5e39e",
+    "digest": "0xab5129af27948c5bf717f4973f26d6fbdc69692c4de80f51e5feee8b05d102f7"
+   },
+   {
+    "op": "SetAgentMarketLimit",
+    "message": {
+     "owner": "0x1111111111111111111111111111111111111111",
+     "agent": "0x2222222222222222222222222222222222222222",
+     "pair": "1",
+     "allowed": true,
+     "maxOrder18dec": "1000000000000000000",
+     "maxPosition18dec": "2000000000000000000",
+     "maxLeverageBps": "50000",
+     "nonce": "7"
+    },
+    "structHash": "0x9ca2ed0fad6450eb97001b4a618854d5cbfadeb41bdfbcfd6002039d682eb91c",
+    "digest": "0x11fe49a018dda59e1e957dd74510f74d490596847c8fcd16afc6502cc3ebcf53"
+   }
+  ]
+ },
+ "signed_vectors": {
+  "vectors": [
+   {
+    "op": "RegisterAgent",
+    "message": {
+     "owner": "0x6e7f9Fc6CAAFA3A5Ebfd9f27c13C559afefEF551",
+     "agent": "0x705b803E72B85900854704C9917bA11FFD24d3c6",
+     "mandate": "mm",
+     "expiresMs": "1",
+     "nonce": "7"
+    },
+    "digest": "0x478e7c8229636b5d5762c5ba9c5fe38756169d8dce313f84b15a1fb55b1df486",
+    "cases": [
+     {
+      "signature": "0xefaa424900a3f9546a00e78ef95d3ea2fd874736992259073c948c47aed0902425310551151ec09d471fdd7c792c1720eb0f2650b731f9fe854d1affb64880681b",
+      "signedBy": "test owner key",
+      "recovers": "0x6e7f9Fc6CAAFA3A5Ebfd9f27c13C559afefEF551",
+      "expected": "ACCEPTED — recovered signer == owner (nonce must also exceed the stored last_nonce for (owner, agent))"
+     },
+     {
+      "signature": "0xd55fb728e511322c76c13d083b4f4620c8cc6b0076915eed076007dae7373f067096fc8c8a5887929f8f732ea9dd29047b9485d214e1ebf48471bd8c6647ecce1b",
+      "signedBy": "test agent key",
+      "recovers": "0x705b803E72B85900854704C9917bA11FFD24d3c6",
+      "expected": "REJECTED (no-op) — recovered signer != owner; agent ops are owner-signed only"
+     },
+     {
+      "signature": "0xefaa424900a3f9546a00e78ef95d3ea2fd874736992259073c948c47aed0902425310551151ec09d471fdd7c792c1720eb0f2650b731f9fe854d1affb64880681b",
+      "signedBy": "test owner key (replayed)",
+      "recovers": "0x6e7f9Fc6CAAFA3A5Ebfd9f27c13C559afefEF551",
+      "expected": "REJECTED (no-op) on a second submission — nonce <= stored last_nonce"
+     }
+    ]
+   },
+   {
+    "op": "RevokeAgent",
+    "message": {
+     "owner": "0x6e7f9Fc6CAAFA3A5Ebfd9f27c13C559afefEF551",
+     "agent": "0x705b803E72B85900854704C9917bA11FFD24d3c6",
+     "nonce": "7"
+    },
+    "digest": "0xf76493bc40d05b92747aa469b59770053724fe434d872bf815ae65f56d1ac5a0",
+    "cases": [
+     {
+      "signature": "0xc41df46134bc84dd8b790ac3ca2fdd5262173765feacb17e71afdc44363d28d803d0299a9bb4b942a9dc0e01330140b65db7a3fdcc3e1c30f46ae03adbe3cdc41b",
+      "signedBy": "test owner key",
+      "recovers": "0x6e7f9Fc6CAAFA3A5Ebfd9f27c13C559afefEF551",
+      "expected": "ACCEPTED — recovered signer == owner (nonce must also exceed the stored last_nonce for (owner, agent))"
+     },
+     {
+      "signature": "0x604a4c75c3bd2c53e038f3e8d41f8f6fe37835d1b8058ea1f46f85867cc4b2d71473c448485e15ee1da67c42cd6b05cd6c632af0350d52829586b65f76c239241c",
+      "signedBy": "test agent key",
+      "recovers": "0x705b803E72B85900854704C9917bA11FFD24d3c6",
+      "expected": "REJECTED (no-op) — recovered signer != owner; agent ops are owner-signed only"
+     },
+     {
+      "signature": "0xc41df46134bc84dd8b790ac3ca2fdd5262173765feacb17e71afdc44363d28d803d0299a9bb4b942a9dc0e01330140b65db7a3fdcc3e1c30f46ae03adbe3cdc41b",
+      "signedBy": "test owner key (replayed)",
+      "recovers": "0x6e7f9Fc6CAAFA3A5Ebfd9f27c13C559afefEF551",
+      "expected": "REJECTED (no-op) on a second submission — nonce <= stored last_nonce"
+     }
+    ]
+   },
+   {
+    "op": "SetAgentPolicy",
+    "message": {
+     "owner": "0x6e7f9Fc6CAAFA3A5Ebfd9f27c13C559afefEF551",
+     "agent": "0x705b803E72B85900854704C9917bA11FFD24d3c6",
+     "capsBitmask": "3",
+     "sideMode": "0",
+     "maxTotalNotional6dec": "1000000",
+     "maxLeverageOverallBps": "50000",
+     "dailyLossLimit6dec": "500000",
+     "drawdownBps": "1000",
+     "feeCapWindow6dec": "100000",
+     "opsPerWindow": "100",
+     "windowLenMs": "86400000",
+     "activeFromMsOfDay": "0",
+     "activeToMsOfDay": "0",
+     "expiresMs": "9999999999",
+     "enabled": true,
+     "nonce": "7"
+    },
+    "digest": "0xc6eee8986bb9e0d062ad37b353d10d3da8a0f9a76c4b866b57c6ddaa7ea3458e",
+    "cases": [
+     {
+      "signature": "0x214dfe712da2cd4e3cb2ad3e67f520d8d4c81c667a45e74465e27955dd1cafa12d29c0f831140cce171d4d7c9945098fe842031823b95b2e73db5ca64ee5dda51c",
+      "signedBy": "test owner key",
+      "recovers": "0x6e7f9Fc6CAAFA3A5Ebfd9f27c13C559afefEF551",
+      "expected": "ACCEPTED — recovered signer == owner (nonce must also exceed the stored last_nonce for (owner, agent))"
+     },
+     {
+      "signature": "0x1651f688677c9ee66d03512e5bcbd99e01b85869f7136fcf24cc339d4b749ef259f6d13e9b0562e3a0abd6343f234ad69397dc92eeaff8d1bd2cae9c9159e5091b",
+      "signedBy": "test agent key",
+      "recovers": "0x705b803E72B85900854704C9917bA11FFD24d3c6",
+      "expected": "REJECTED (no-op) — recovered signer != owner; agent ops are owner-signed only"
+     },
+     {
+      "signature": "0x214dfe712da2cd4e3cb2ad3e67f520d8d4c81c667a45e74465e27955dd1cafa12d29c0f831140cce171d4d7c9945098fe842031823b95b2e73db5ca64ee5dda51c",
+      "signedBy": "test owner key (replayed)",
+      "recovers": "0x6e7f9Fc6CAAFA3A5Ebfd9f27c13C559afefEF551",
+      "expected": "REJECTED (no-op) on a second submission — nonce <= stored last_nonce"
+     }
+    ]
+   },
+   {
+    "op": "SetAgentMarketLimit",
+    "message": {
+     "owner": "0x6e7f9Fc6CAAFA3A5Ebfd9f27c13C559afefEF551",
+     "agent": "0x705b803E72B85900854704C9917bA11FFD24d3c6",
+     "pair": "1",
+     "allowed": true,
+     "maxOrder18dec": "1000000000000000000",
+     "maxPosition18dec": "2000000000000000000",
+     "maxLeverageBps": "50000",
+     "nonce": "7"
+    },
+    "digest": "0x003410b2c080b32bbc47b7b92759fbd8eb0c240df3c86e954cd7785fc9536117",
+    "cases": [
+     {
+      "signature": "0x0f0d31d419bf6e60e216a7a607078aaa6b5b700cc043c206dd82610e9d9f53f706a853ddbaa30177717cc06f0ff0edbc3208587b86ce86e0bb4121f6d0709b301c",
+      "signedBy": "test owner key",
+      "recovers": "0x6e7f9Fc6CAAFA3A5Ebfd9f27c13C559afefEF551",
+      "expected": "ACCEPTED — recovered signer == owner (nonce must also exceed the stored last_nonce for (owner, agent))"
+     },
+     {
+      "signature": "0x9b1b64717713737262bdf244db0f7b12aa8eee44800214389b602bdf08d6fab4680028330bc279fa36dc260bdd570f05ef82f5ddfcae3a68b1faaeedf19641c71c",
+      "signedBy": "test agent key",
+      "recovers": "0x705b803E72B85900854704C9917bA11FFD24d3c6",
+      "expected": "REJECTED (no-op) — recovered signer != owner; agent ops are owner-signed only"
+     },
+     {
+      "signature": "0x0f0d31d419bf6e60e216a7a607078aaa6b5b700cc043c206dd82610e9d9f53f706a853ddbaa30177717cc06f0ff0edbc3208587b86ce86e0bb4121f6d0709b301c",
+      "signedBy": "test owner key (replayed)",
+      "recovers": "0x6e7f9Fc6CAAFA3A5Ebfd9f27c13C559afefEF551",
+      "expected": "REJECTED (no-op) on a second submission — nonce <= stored last_nonce"
+     }
+    ]
+   }
+  ]
+ }
+}

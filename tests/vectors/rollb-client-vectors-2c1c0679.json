@@ -1,0 +1,559 @@
+{
+ "activation": {
+  "sample_H": 1000000
+ },
+ "domain": {
+  "domainSeparator": "0x68b86feeb9a9d9d471c3355da4719f2ce6a2330fbde6dad54d815783dacab34b",
+  "verifyingContract": "0x0000000000000000000000000000000000001002"
+ },
+ "ops": [
+  {
+   "digest": "0xd370e95bd0c0e479731a1747f69719a838c043824c3d231821d997e8fa62e6ab",
+   "fields": {
+    "agent": "0x705b803e72b85900854704c9917ba11ffd24d3c6",
+    "expiresMs": 1893456000000,
+    "mandate": "market-making on BTC-USD perps",
+    "name": "Alpha Bot",
+    "nonce": 1727000000000,
+    "owner": "0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551"
+   },
+   "signed": {
+    "signature": "0xd9755128011437be2eeffc4eb91b8fd56d8ae6594e2f6ce535fdb95eef5a38957ff0ec677346880fb7a7106e42fe2aaa99a08bd72ee371a152d3737aa982ee4c1c"
+   },
+   "signed_by_agent_key": {
+    "rule": "REFUSED at intake (BadSignature): owner only",
+    "signature": "0xe49d6cab1b512ddfe318f50babf7d49f279aedc99a5ea54827d4573f4a253a052a0e3d70b72cb66472a11c03dc77a3ccd747003a4bdeeed2f9c7ee8cd380fab81b"
+   },
+   "submit": {
+    "body": {
+     "agent": "0x705b803e72b85900854704c9917ba11ffd24d3c6",
+     "expires_ms": 1893456000000,
+     "mandate": "market-making on BTC-USD perps",
+     "name": "Alpha Bot",
+     "nonce": 1727000000000,
+     "op": "RegisterAgentV2",
+     "owner": "0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551",
+     "signature": "0xd9755128011437be2eeffc4eb91b8fd56d8ae6594e2f6ce535fdb95eef5a38957ff0ec677346880fb7a7106e42fe2aaa99a08bd72ee371a152d3737aa982ee4c1c"
+    }
+   },
+   "submit_signed_by_agent": {
+    "body": {
+     "agent": "0x705b803e72b85900854704c9917ba11ffd24d3c6",
+     "expires_ms": 1893456000000,
+     "nonce": 1727000000000,
+     "op": "RegisterAgentV2",
+     "owner": "0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551",
+     "signature": "0xe49d6cab1b512ddfe318f50babf7d49f279aedc99a5ea54827d4573f4a253a052a0e3d70b72cb66472a11c03dc77a3ccd747003a4bdeeed2f9c7ee8cd380fab81b"
+    }
+   },
+   "typeHash": "0xb5b489380f6c8779be7ec482317a372b0dc6f4922de83fde46445c6c88b9df06",
+   "typeString": "RegisterAgentV2(address owner,address agent,string name,string mandate,uint64 expiresMs,uint64 nonce)"
+  },
+  {
+   "digest": "0x62dcd61baa81ceb423799074a79d75022c5520fe274b201a33f2c16a8265b772",
+   "fields": {
+    "agent": "0x705b803e72b85900854704c9917ba11ffd24d3c6",
+    "name": "Hedger Two",
+    "nonce": 1727000000001,
+    "owner": "0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551"
+   },
+   "signed": {
+    "signature": "0xd669f5bb2f69d80db951162c16b9851702859ff1bfbad9760727b070cbf97abe3d03b9fcddf73faae9cdd7436e329b1ab29db6543a588b7c45e3bec45900f5981c"
+   },
+   "signed_by_agent_key": {
+    "rule": "REFUSED at intake (BadSignature): owner only",
+    "signature": "0xa3b679fed5bec73d373a694c97e9ff0aadaccba85159b201314ab92a498cb48c59853b74038ab8af9b0b9806c89099f24f7f559618d585987e12c8b2f56171ca1b"
+   },
+   "submit": {
+    "body": {
+     "agent": "0x705b803e72b85900854704c9917ba11ffd24d3c6",
+     "name": "Hedger Two",
+     "nonce": 1727000000001,
+     "op": "SetAgentName",
+     "owner": "0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551",
+     "signature": "0xd669f5bb2f69d80db951162c16b9851702859ff1bfbad9760727b070cbf97abe3d03b9fcddf73faae9cdd7436e329b1ab29db6543a588b7c45e3bec45900f5981c"
+    }
+   },
+   "submit_signed_by_agent": {
+    "body": {
+     "agent": "0x705b803e72b85900854704c9917ba11ffd24d3c6",
+     "nonce": 1727000000001,
+     "op": "SetAgentName",
+     "owner": "0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551",
+     "signature": "0xa3b679fed5bec73d373a694c97e9ff0aadaccba85159b201314ab92a498cb48c59853b74038ab8af9b0b9806c89099f24f7f559618d585987e12c8b2f56171ca1b"
+    }
+   },
+   "typeHash": "0x9c25acb2e2f15181e3a15b3e73bb9f2e30ec147f63b057ce2de6a4d3f1aa48da",
+   "typeString": "SetAgentName(address owner,address agent,string name,uint64 nonce)"
+  },
+  {
+   "digest": "0x6a592b3310593917cd275d67d56f4545ab260813f04610f6be7710a3b0bb2678",
+   "fields": {
+    "activeFromMsOfDay": 0,
+    "activeToMsOfDay": 86399999,
+    "agent": "0x705b803e72b85900854704c9917ba11ffd24d3c6",
+    "capsBitmask": 31,
+    "dailyFeeCap6dec": "250000000",
+    "dailyLossLimit6dec": "5000000000",
+    "enabled": true,
+    "expiresMs": 1893456000000,
+    "lockAutoClear": true,
+    "maxLeverageBps": 30000,
+    "maxTotalExposure6dec": "50000000000",
+    "nonce": 1727000000002,
+    "opsPerWindow": 120,
+    "opsWindowMs": 60000,
+    "oracleBandBps": 200,
+    "owner": "0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551",
+    "sideMode": 0
+   },
+   "signed": {
+    "signature": "0x3136e7441b340a531272b339c81ef426e8550072f037f1d911dc7489d2a1216964ca36800b800015cf984ff14cc39c3a97125963d407a1c1a108ac87efd005941b"
+   },
+   "signed_by_agent_key": {
+    "rule": "ACCEPTED at intake: the agent may sign this op for itself, but apply admits an agent-signed policy only if it TIGHTENS the stored one (agent's own self_nonce); loosening needs the owner",
+    "signature": "0xbc3a437f63f80d39d7e87c52f54ee22ef1db62db32a48637d4be556b2bafdf9050f613acf810f661de2fdce5164316c9ee4e511de44238c0913ef73af131cdd61b"
+   },
+   "submit": {
+    "body": {
+     "active_from_ms_of_day": 0,
+     "active_to_ms_of_day": 86399999,
+     "agent": "0x705b803e72b85900854704c9917ba11ffd24d3c6",
+     "caps_bitmask": 31,
+     "daily_fee_cap_6dec": "250000000",
+     "daily_loss_limit_6dec": "5000000000",
+     "enabled": true,
+     "expires_ms": 1893456000000,
+     "lock_auto_clear": true,
+     "max_leverage_bps": 30000,
+     "max_total_exposure_6dec": "50000000000",
+     "nonce": 1727000000002,
+     "op": "SetAgentPolicyV1",
+     "ops_per_window": 120,
+     "ops_window_ms": 60000,
+     "oracle_band_bps": 200,
+     "owner": "0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551",
+     "side_mode": 0,
+     "signature": "0x3136e7441b340a531272b339c81ef426e8550072f037f1d911dc7489d2a1216964ca36800b800015cf984ff14cc39c3a97125963d407a1c1a108ac87efd005941b"
+    }
+   },
+   "submit_signed_by_agent": {
+    "body": {
+     "active_from_ms_of_day": 0,
+     "active_to_ms_of_day": 86399999,
+     "agent": "0x705b803e72b85900854704c9917ba11ffd24d3c6",
+     "caps_bitmask": 31,
+     "daily_fee_cap_6dec": "250000000",
+     "daily_loss_limit_6dec": "5000000000",
+     "enabled": true,
+     "expires_ms": 1893456000000,
+     "lock_auto_clear": true,
+     "max_leverage_bps": 30000,
+     "max_total_exposure_6dec": "50000000000",
+     "nonce": 1727000000002,
+     "op": "SetAgentPolicyV1",
+     "ops_per_window": 120,
+     "ops_window_ms": 60000,
+     "oracle_band_bps": 200,
+     "owner": "0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551",
+     "side_mode": 0,
+     "signature": "0xbc3a437f63f80d39d7e87c52f54ee22ef1db62db32a48637d4be556b2bafdf9050f613acf810f661de2fdce5164316c9ee4e511de44238c0913ef73af131cdd61b"
+    }
+   },
+   "typeHash": "0x3292e41e7bc2af4a6a4e9bca1741b8dc28965c821912b8d4a283bde0ec5aaea9",
+   "typeString": "SetAgentPolicyV1(address owner,address agent,uint32 capsBitmask,uint8 sideMode,uint128 maxTotalExposure6dec,uint32 maxLeverageBps,uint128 dailyLossLimit6dec,uint128 dailyFeeCap6dec,uint32 opsPerWindow,uint32 opsWindowMs,uint32 activeFromMsOfDay,uint32 activeToMsOfDay,uint32 oracleBandBps,bool lockAutoClear,uint64 expiresMs,bool enabled,uint64 nonce)"
+  },
+  {
+   "digest": "0xf5f129b288122f7ce06e072383fc5515d11afad6e1602ccad57b0e5e24f2b1a9",
+   "fields": {
+    "agent": "0x705b803e72b85900854704c9917ba11ffd24d3c6",
+    "lockSinceMs": 1727100000000,
+    "nonce": 1727000000003,
+    "owner": "0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551"
+   },
+   "signed": {
+    "signature": "0xc8f349ed70562f2986679bee807fac39a6eee99dc64cab8d5c26fb54f3fb74ed070fd46553a75b7591e94adf5508c3bc6023452e03b1b379a9bcfcbbf8f13d441b"
+   },
+   "signed_by_agent_key": {
+    "rule": "REFUSED at intake (BadSignature): owner only",
+    "signature": "0x0a9137eae7748dfb85d8f56555db84069d931f85a730b18347ad485bf18cae48704bfa3564366006f921e155ade0268fda9bbcf88f2d281769c26ac1383a44e41b"
+   },
+   "submit": {
+    "body": {
+     "agent": "0x705b803e72b85900854704c9917ba11ffd24d3c6",
+     "lock_since_ms": 1727100000000,
+     "nonce": 1727000000003,
+     "op": "ClearAgentLock",
+     "owner": "0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551",
+     "signature": "0xc8f349ed70562f2986679bee807fac39a6eee99dc64cab8d5c26fb54f3fb74ed070fd46553a75b7591e94adf5508c3bc6023452e03b1b379a9bcfcbbf8f13d441b"
+    }
+   },
+   "submit_signed_by_agent": {
+    "body": {
+     "agent": "0x705b803e72b85900854704c9917ba11ffd24d3c6",
+     "nonce": 1727000000003,
+     "op": "ClearAgentLock",
+     "owner": "0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551",
+     "signature": "0x0a9137eae7748dfb85d8f56555db84069d931f85a730b18347ad485bf18cae48704bfa3564366006f921e155ade0268fda9bbcf88f2d281769c26ac1383a44e41b"
+    }
+   },
+   "typeHash": "0x9bda26585c945c0e798e7700a5e7bd6954c4487958d74173e255cc0122a7b8d5",
+   "typeString": "ClearAgentLock(address owner,address agent,uint64 lockSinceMs,uint64 nonce)"
+  }
+ ],
+ "name_rule": {
+  "default_reserved_words": [
+   "admin",
+   "helpdesk",
+   "moderator",
+   "official",
+   "support",
+   "validator",
+   "vordex",
+   "vordium",
+   "vordscan"
+  ],
+  "table": [
+   {
+    "name": "Alpha Bot",
+    "name_hex": "0x416c70686120426f74",
+    "result": "accepted",
+    "skeleton": "alphabot"
+   },
+   {
+    "name": "mm-desk_01",
+    "name_hex": "0x6d6d2d6465736b5f3031",
+    "result": "accepted",
+    "skeleton": "mmdesk01"
+   },
+   {
+    "name": "Q3.Hedger",
+    "name_hex": "0x51332e486564676572",
+    "result": "accepted",
+    "skeleton": "q3hedger"
+   },
+   {
+    "name": "abc",
+    "name_hex": "0x616263",
+    "result": "accepted",
+    "skeleton": "abc"
+   },
+   {
+    "name": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "name_hex": "0x4141414141414141414141414141414141414141414141414141414141414141",
+    "result": "accepted",
+    "skeleton": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+   },
+   {
+    "name": "ab",
+    "name_hex": "0x6162",
+    "result": "TooShort",
+    "skeleton": "ab"
+   },
+   {
+    "name": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "name_hex": "0x414141414141414141414141414141414141414141414141414141414141414141",
+    "result": "TooLong",
+    "skeleton": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+   },
+   {
+    "name": " Alpha",
+    "name_hex": "0x20416c706861",
+    "result": "NotCanonical",
+    "skeleton": "alpha"
+   },
+   {
+    "name": "Alpha ",
+    "name_hex": "0x416c70686120",
+    "result": "NotCanonical",
+    "skeleton": "alpha"
+   },
+   {
+    "name": "Al  pha",
+    "name_hex": "0x416c2020706861",
+    "result": "NotCanonical",
+    "skeleton": "alpha"
+   },
+   {
+    "name": "Al\tpha",
+    "name_hex": "0x416c09706861",
+    "result": "ControlChar",
+    "skeleton": "al\tpha"
+   },
+   {
+    "name": "Al\npha",
+    "name_hex": "0x416c0a706861",
+    "result": "ControlChar",
+    "skeleton": "al\npha"
+   },
+   {
+    "name": "Al​pha",
+    "name_hex": "0x416ce2808b706861",
+    "result": "NonAscii",
+    "skeleton": "al​pha"
+   },
+   {
+    "name": "Al pha",
+    "name_hex": "0x416cc2a0706861",
+    "result": "NonAscii",
+    "skeleton": "al pha"
+   },
+   {
+    "name": "Álpha",
+    "name_hex": "0xc3816c706861",
+    "result": "NonAscii",
+    "skeleton": "Álpha"
+   },
+   {
+    "name": "vоrdium",
+    "name_hex": "0x76d0be726469756d",
+    "result": "NonAscii",
+    "skeleton": "vоrdium"
+   },
+   {
+    "name": "Ｖｏｒｄ",
+    "name_hex": "0xefbcb6efbd8fefbd92efbd84",
+    "result": "NonAscii",
+    "skeleton": "Ｖｏｒｄ"
+   },
+   {
+    "name": "a/b",
+    "name_hex": "0x612f62",
+    "result": "BadChar",
+    "skeleton": "a/b"
+   },
+   {
+    "name": "---",
+    "name_hex": "0x2d2d2d",
+    "result": "NoAlphanumeric",
+    "skeleton": ""
+   },
+   {
+    "name": "Vordium Bot",
+    "name_hex": "0x566f726469756d20426f74",
+    "result": "Reserved(\"vordium\")",
+    "skeleton": "vordiumbot"
+   },
+   {
+    "name": "Sup-port Bot",
+    "name_hex": "0x5375702d706f727420426f74",
+    "result": "Reserved(\"support\")",
+    "skeleton": "supportbot"
+   },
+   {
+    "name": "vord.ium",
+    "name_hex": "0x766f72642e69756d",
+    "result": "Reserved(\"vordium\")",
+    "skeleton": "vordium"
+   },
+   {
+    "name": "Badminton Club",
+    "name_hex": "0x4261646d696e746f6e20436c7562",
+    "result": "Reserved(\"admin\")",
+    "skeleton": "badmintonclub"
+   },
+   {
+    "name": "Validator One",
+    "name_hex": "0x56616c696461746f72204f6e65",
+    "result": "Reserved(\"validator\")",
+    "skeleton": "validatorone"
+   }
+  ]
+ },
+ "network": {
+  "chainId": 101101,
+  "genesis_sha256": "2c1c0679fa6ab8358f1d3e8d294a8d1c73ac2e2caf9079f1216abedc3d9fdf4f"
+ },
+ "owner_signed_money_ops": [
+  {
+   "genesis_bound_from_H": {
+    "owner_signature": "0x4fb4b59479b29e1b939ea6f9fa7d742061d6ddf12c1c228e97932285e6cf066719efc8f3590acf9c9341d2b3474cceed394bb318352e12441d6b848ed2c318bb1c",
+    "owner_signed_post_body": {
+     "amount_6dec": 25000000,
+     "nonce": 7,
+     "signature": "0x4fb4b59479b29e1b939ea6f9fa7d742061d6ddf12c1c228e97932285e6cf066719efc8f3590acf9c9341d2b3474cceed394bb318352e12441d6b848ed2c318bb1c",
+     "user": "0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551"
+    }
+   },
+   "legacy_below_H": {
+    "owner_signature": "0x6f4cdf511f6ea2d4f9e0d89370dbd33e221d09d4af9774c650ae100fc6c555c6566fe3fa4324f94808ea4b2e1293e04dc0ca31d6be3cd58db64a1f96533a252f1c",
+    "owner_signed_post_body": {
+     "amount_6dec": 25000000,
+     "nonce": 7,
+     "signature": "0x6f4cdf511f6ea2d4f9e0d89370dbd33e221d09d4af9774c650ae100fc6c555c6566fe3fa4324f94808ea4b2e1293e04dc0ca31d6be3cd58db64a1f96533a252f1c",
+     "user": "0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551"
+    }
+   },
+   "messages": {
+    "genesis_bound_from_H": {
+     "digest": "0x4f260ae8f29cb127df8915fea6b246dd47bcc11c72d7bf0c39b3ae6f4587df3b",
+     "message": "Vordium Admin\nChain: 101101\nGenesis: 2c1c0679fa6ab8358f1d3e8d294a8d1c73ac2e2caf9079f1216abedc3d9fdf4f\nAction: Vlp Deposit\nUser: 0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551\nAmount 6dec: 25000000\nNonce: 7"
+    },
+    "legacy_below_H": {
+     "digest": "0xdaccc072c44361ae0947b0d9c24e6d510a24175a4206c1d4e672ed44f91d27bc",
+     "message": "Vordium Admin\nChain: 101101\nAction: Vlp Deposit\nUser: 0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551\nAmount 6dec: 25000000\nNonce: 7"
+    }
+   },
+   "op": "VlpDeposit",
+   "route": "POST /vlp/deposit"
+  },
+  {
+   "genesis_bound_from_H": {
+    "owner_signature": "0x9f1bfb7b6aba863aa09a1fb2b81752cf702de3c2683f8954d187e8f6b310ecd055193638850af7bd9d62a30ddb58bd27eeaeba92d05709b860f3f131abf491131b",
+    "owner_signed_post_body": {
+     "nonce": 8,
+     "shares": "1000000000000000000",
+     "signature": "0x9f1bfb7b6aba863aa09a1fb2b81752cf702de3c2683f8954d187e8f6b310ecd055193638850af7bd9d62a30ddb58bd27eeaeba92d05709b860f3f131abf491131b",
+     "user": "0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551"
+    }
+   },
+   "legacy_below_H": {
+    "owner_signature": "0x5a3d81f474bde84ea2155c9bda9a7fcce27c799e33081268017f6f293ffbf1854b06315d2ae4a0951d8a53150d39c447cd02ab48500cdcd671f679e477bf417c1b",
+    "owner_signed_post_body": {
+     "nonce": 8,
+     "shares": "1000000000000000000",
+     "signature": "0x5a3d81f474bde84ea2155c9bda9a7fcce27c799e33081268017f6f293ffbf1854b06315d2ae4a0951d8a53150d39c447cd02ab48500cdcd671f679e477bf417c1b",
+     "user": "0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551"
+    }
+   },
+   "messages": {
+    "genesis_bound_from_H": {
+     "digest": "0xf691ff76246fedf1a01ab90daf4cc7d432dbc40c7db5d337fdeadb86c400c399",
+     "message": "Vordium Admin\nChain: 101101\nGenesis: 2c1c0679fa6ab8358f1d3e8d294a8d1c73ac2e2caf9079f1216abedc3d9fdf4f\nAction: Vlp Withdraw\nUser: 0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551\nShares: 1000000000000000000\nNonce: 8"
+    },
+    "legacy_below_H": {
+     "digest": "0x9d0b4f262d87b37ebb06c5fa6ee86f15120257a764c28ebb3dd4e173b6eadde2",
+     "message": "Vordium Admin\nChain: 101101\nAction: Vlp Withdraw\nUser: 0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551\nShares: 1000000000000000000\nNonce: 8"
+    }
+   },
+   "op": "VlpWithdraw",
+   "route": "POST /vlp/withdraw"
+  },
+  {
+   "genesis_bound_from_H": {
+    "owner_signature": "0x605b78ea16ef666421064bad252e0f86abf074e5daa22d197a6502b44eb328057052604af73d7f0015d13e8badc1c1e6e655a2d643e7a74e0235d720da8a10cc1c",
+    "owner_signed_post_body": {
+     "amount": "500000000000000000000",
+     "lock_ms": 2592000000,
+     "nonce": 9,
+     "owner": "0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551",
+     "signature": "0x605b78ea16ef666421064bad252e0f86abf074e5daa22d197a6502b44eb328057052604af73d7f0015d13e8badc1c1e6e655a2d643e7a74e0235d720da8a10cc1c"
+    }
+   },
+   "legacy_below_H": {
+    "owner_signature": "0x1a7d73c797d91f28595b3a52feab1e7cbc5555580bb06b241b1b68600e60b0b022b2cd5bf6cee2d4922856fe59f939562b8ef18798d4504cca19cee320ac54481c",
+    "owner_signed_post_body": {
+     "amount": "500000000000000000000",
+     "lock_ms": 2592000000,
+     "nonce": 9,
+     "owner": "0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551",
+     "signature": "0x1a7d73c797d91f28595b3a52feab1e7cbc5555580bb06b241b1b68600e60b0b022b2cd5bf6cee2d4922856fe59f939562b8ef18798d4504cca19cee320ac54481c"
+    }
+   },
+   "messages": {
+    "genesis_bound_from_H": {
+     "digest": "0x8be7b4f847522148b5925711292cc59cb8c7f17eba830c1f4bc4e9713c3dc336",
+     "message": "Vordium Admin\nChain: 101101\nGenesis: 2c1c0679fa6ab8358f1d3e8d294a8d1c73ac2e2caf9079f1216abedc3d9fdf4f\nAction: Stake\nOwner: 0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551\nAmount: 500000000000000000000\nLock Ms: 2592000000\nNonce: 9"
+    },
+    "legacy_below_H": {
+     "digest": "0x71389e94f5d1d9f24eba2ee29309227c6c7d9f59db025773857026acad0e1edb",
+     "message": "Vordium Admin\nChain: 101101\nAction: Stake\nOwner: 0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551\nAmount: 500000000000000000000\nLock Ms: 2592000000\nNonce: 9"
+    }
+   },
+   "op": "Stake",
+   "route": "POST /staking/stake"
+  },
+  {
+   "genesis_bound_from_H": {
+    "owner_signature": "0x69942451c98756eab2e6b7ff151541e51eeeaa36d10ba17e331c4f57a884c3810b76e39148aa4d3e96138404bc80a97495d1c83d7a82c4ef9ae289d7007ab7441c",
+    "owner_signed_post_body": {
+     "nonce": 10,
+     "owner": "0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551",
+     "signature": "0x69942451c98756eab2e6b7ff151541e51eeeaa36d10ba17e331c4f57a884c3810b76e39148aa4d3e96138404bc80a97495d1c83d7a82c4ef9ae289d7007ab7441c"
+    }
+   },
+   "legacy_below_H": {
+    "owner_signature": "0x7f8f539e6c6278d437f40c6cf94d0cad58ec5a9b5bb4360df7a0470f690f8fe93f605840ec34a054cb2082ca3f3503fcc6598de96c587d8818daa6814101f1bb1c",
+    "owner_signed_post_body": {
+     "nonce": 10,
+     "owner": "0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551",
+     "signature": "0x7f8f539e6c6278d437f40c6cf94d0cad58ec5a9b5bb4360df7a0470f690f8fe93f605840ec34a054cb2082ca3f3503fcc6598de96c587d8818daa6814101f1bb1c"
+    }
+   },
+   "messages": {
+    "genesis_bound_from_H": {
+     "digest": "0x628bd44cab042927b122fa356939c88e9b8547130a1276787e88b5ea5b70be4e",
+     "message": "Vordium Admin\nChain: 101101\nGenesis: 2c1c0679fa6ab8358f1d3e8d294a8d1c73ac2e2caf9079f1216abedc3d9fdf4f\nAction: Unstake\nOwner: 0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551\nNonce: 10"
+    },
+    "legacy_below_H": {
+     "digest": "0xbdaa5212b1465ff10faa87cecb2c4c04befd58cc69603b4976904db12901b202",
+     "message": "Vordium Admin\nChain: 101101\nAction: Unstake\nOwner: 0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551\nNonce: 10"
+    }
+   },
+   "op": "Unstake",
+   "route": "POST /staking/unstake"
+  },
+  {
+   "genesis_bound_from_H": {
+    "owner_signature": "0xd5db0fc3a4c69cf9ccb895360ef51acab839a6e67675245b90a90481d673b5a349f459c00107bc82454f7eeb5fb8617f7deaf1b2c21bd01040a762561c76ddc91b",
+    "owner_signed_post_body": {
+     "nonce": 11,
+     "owner": "0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551",
+     "signature": "0xd5db0fc3a4c69cf9ccb895360ef51acab839a6e67675245b90a90481d673b5a349f459c00107bc82454f7eeb5fb8617f7deaf1b2c21bd01040a762561c76ddc91b"
+    }
+   },
+   "legacy_below_H": {
+    "owner_signature": "0xc2f6b8a626d2c31ad050ba57a8a4c3fedb0a0da8fda4a6bb04f76d49441327dc6f7851bc804e368684e8499f77d45d9730fdbcdfaf2bd6e0fac44db215238ec21c",
+    "owner_signed_post_body": {
+     "nonce": 11,
+     "owner": "0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551",
+     "signature": "0xc2f6b8a626d2c31ad050ba57a8a4c3fedb0a0da8fda4a6bb04f76d49441327dc6f7851bc804e368684e8499f77d45d9730fdbcdfaf2bd6e0fac44db215238ec21c"
+    }
+   },
+   "messages": {
+    "genesis_bound_from_H": {
+     "digest": "0x0be0e1605b82bb1db107f36d20f0710345663561d542424b356007def4ead96d",
+     "message": "Vordium Admin\nChain: 101101\nGenesis: 2c1c0679fa6ab8358f1d3e8d294a8d1c73ac2e2caf9079f1216abedc3d9fdf4f\nAction: Claim Staking Rewards\nOwner: 0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551\nNonce: 11"
+    },
+    "legacy_below_H": {
+     "digest": "0x4f720cc3481515ab6309e5611169137e0223fc9e8032be3ff8bd5ad087741e9f",
+     "message": "Vordium Admin\nChain: 101101\nAction: Claim Staking Rewards\nOwner: 0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551\nNonce: 11"
+    }
+   },
+   "op": "ClaimStakingRewards",
+   "route": "POST /staking/claim"
+  }
+ ],
+ "referral_messages": {
+  "ClaimReferralEarnings (signed by the referrer)": {
+   "genesis_bound_from_H": {
+    "digest": "0x71d61f5e8e63e24be93ffc54b4ec3dfe67d9c739edf5df90f7097057d90d4dcd",
+    "message": "Vordex Referral\nChain: 101101\nGenesis: 2c1c0679fa6ab8358f1d3e8d294a8d1c73ac2e2caf9079f1216abedc3d9fdf4f\nAction: Claim Earnings\nReferrer: 0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551\nNonce: 2"
+   },
+   "legacy_below_H": {
+    "digest": "0x5dcbd248114f0b1f80bc9b1a45845e7c8a2aec8852b673af5e8a9b1ce7f5b109",
+    "message": "Vordex Referral\nChain: 101101\nAction: Claim Earnings\nReferrer: 0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551\nNonce: 2"
+   }
+  },
+  "RegisterReferralCode (signed by the referrer)": {
+   "genesis_bound_from_H": {
+    "digest": "0x4a80f45d8d2e7f1d85f9a6d08744ef02601c25ca243078c6dea30965abcb4b51",
+    "message": "Vordex Referral\nChain: 101101\nGenesis: 2c1c0679fa6ab8358f1d3e8d294a8d1c73ac2e2caf9079f1216abedc3d9fdf4f\nAction: Register Code\nReferrer: 0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551\nCode: VORD-ABC1234\nNonce: 1"
+   },
+   "legacy_below_H": {
+    "digest": "0xa8d1aa8f5a7c522f5f090f596b1fabf74518bbc86f696d7fdcabc44bae02d99a",
+    "message": "Vordex Referral\nChain: 101101\nAction: Register Code\nReferrer: 0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551\nCode: VORD-ABC1234\nNonce: 1"
+   }
+  },
+  "RegisterReferralTrader (signed by the trader; the trader address is not in the text)": {
+   "genesis_bound_from_H": {
+    "digest": "0xaa64cbbbeafe8e357b0cf49c9c6b31459ef939f72c71aaa506c7d713d9271ab6",
+    "message": "Vordex Referral\nChain: 101101\nGenesis: 2c1c0679fa6ab8358f1d3e8d294a8d1c73ac2e2caf9079f1216abedc3d9fdf4f\nAction: Register Trader\nReferrer: 0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551\nCode: VORD-ABC1234\nNonce: 1"
+   },
+   "legacy_below_H": {
+    "digest": "0x439ec7370b54d318de4de61ed7e55de4ddb414546d2c338094af98494ef46fc9",
+    "message": "Vordex Referral\nChain: 101101\nAction: Register Trader\nReferrer: 0x6e7f9fc6caafa3a5ebfd9f27c13c559afefef551\nCode: VORD-ABC1234\nNonce: 1"
+   }
+  }
+ }
+}
