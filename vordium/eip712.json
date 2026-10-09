@@ -1,0 +1,500 @@
+{
+ "_note": "Field ORDER, NAMES and solidity TYPES are structural and byte-exact with the chain's signing code; do not reorder or rename fields. chainId, verifyingContract and the genesis-bound salt are resolved at runtime from vordium.network, never pinned here.",
+ "domain": {
+  "name": "VordCore",
+  "version": "1",
+  "verifyingContract": "0x0000000000000000000000000000000000001002"
+ },
+ "types": {
+  "PlaceOrder": [
+   {
+    "name": "owner",
+    "type": "address"
+   },
+   {
+    "name": "pairId",
+    "type": "uint32"
+   },
+   {
+    "name": "side",
+    "type": "uint8"
+   },
+   {
+    "name": "size",
+    "type": "uint128"
+   },
+   {
+    "name": "price",
+    "type": "uint64"
+   },
+   {
+    "name": "leverageBps",
+    "type": "uint32"
+   },
+   {
+    "name": "orderType",
+    "type": "uint8"
+   },
+   {
+    "name": "reduceOnly",
+    "type": "bool"
+   },
+   {
+    "name": "postOnly",
+    "type": "bool"
+   },
+   {
+    "name": "triggerPrice8dec",
+    "type": "uint64"
+   },
+   {
+    "name": "triggerDir",
+    "type": "uint8"
+   },
+   {
+    "name": "clientNonce",
+    "type": "uint64"
+   }
+  ],
+  "CancelOrder": [
+   {
+    "name": "owner",
+    "type": "address"
+   },
+   {
+    "name": "orderId",
+    "type": "uint64"
+   }
+  ],
+  "ModifyOrder": [
+   {
+    "name": "owner",
+    "type": "address"
+   },
+   {
+    "name": "orderId",
+    "type": "uint64"
+   },
+   {
+    "name": "newPrice",
+    "type": "uint64"
+   },
+   {
+    "name": "newSize",
+    "type": "uint128"
+   }
+  ],
+  "VordTransfer": [
+   {
+    "name": "from",
+    "type": "address"
+   },
+   {
+    "name": "to",
+    "type": "address"
+   },
+   {
+    "name": "amount",
+    "type": "uint128"
+   },
+   {
+    "name": "nonce",
+    "type": "uint64"
+   }
+  ],
+  "PlaceTwap": [
+   {
+    "name": "owner",
+    "type": "address"
+   },
+   {
+    "name": "pairId",
+    "type": "uint32"
+   },
+   {
+    "name": "side",
+    "type": "uint8"
+   },
+   {
+    "name": "totalSize18dec",
+    "type": "uint128"
+   },
+   {
+    "name": "numSlices",
+    "type": "uint32"
+   },
+   {
+    "name": "durationMs",
+    "type": "uint64"
+   },
+   {
+    "name": "leverageBps",
+    "type": "uint32"
+   },
+   {
+    "name": "slippageBps",
+    "type": "uint32"
+   },
+   {
+    "name": "randomize",
+    "type": "bool"
+   },
+   {
+    "name": "triggerPrice8dec",
+    "type": "uint64"
+   },
+   {
+    "name": "triggerDir",
+    "type": "uint8"
+   },
+   {
+    "name": "minPrice8dec",
+    "type": "uint64"
+   },
+   {
+    "name": "maxPrice8dec",
+    "type": "uint64"
+   },
+   {
+    "name": "clientNonce",
+    "type": "uint64"
+   }
+  ],
+  "CancelTwap": [
+   {
+    "name": "owner",
+    "type": "address"
+   },
+   {
+    "name": "twapId",
+    "type": "uint64"
+   },
+   {
+    "name": "clientNonce",
+    "type": "uint64"
+   }
+  ],
+  "SetAgentCaps": [
+   {
+    "name": "owner",
+    "type": "address"
+   },
+   {
+    "name": "maxLeverage",
+    "type": "uint64"
+   },
+   {
+    "name": "allowedOrderTypes",
+    "type": "uint32"
+   },
+   {
+    "name": "maxInputPerTrade",
+    "type": "uint128"
+   },
+   {
+    "name": "maxTotalPosition",
+    "type": "uint128"
+   }
+  ],
+  "SetAgentMode": [
+   {
+    "name": "owner",
+    "type": "address"
+   },
+   {
+    "name": "mode",
+    "type": "uint8"
+   }
+  ],
+  "SetTpSl": [
+   {
+    "name": "owner",
+    "type": "address"
+   },
+   {
+    "name": "pairId",
+    "type": "uint32"
+   },
+   {
+    "name": "positionId",
+    "type": "uint64"
+   },
+   {
+    "name": "takeProfit8dec",
+    "type": "uint64"
+   },
+   {
+    "name": "stopLoss8dec",
+    "type": "uint64"
+   }
+  ],
+  "RegisterAgent": [
+   {
+    "name": "owner",
+    "type": "address"
+   },
+   {
+    "name": "agent",
+    "type": "address"
+   },
+   {
+    "name": "mandate",
+    "type": "string"
+   },
+   {
+    "name": "expiresMs",
+    "type": "uint64"
+   },
+   {
+    "name": "nonce",
+    "type": "uint64"
+   }
+  ],
+  "RevokeAgent": [
+   {
+    "name": "owner",
+    "type": "address"
+   },
+   {
+    "name": "agent",
+    "type": "address"
+   },
+   {
+    "name": "nonce",
+    "type": "uint64"
+   }
+  ],
+  "SetAgentPolicy": [
+   {
+    "name": "owner",
+    "type": "address"
+   },
+   {
+    "name": "agent",
+    "type": "address"
+   },
+   {
+    "name": "capsBitmask",
+    "type": "uint32"
+   },
+   {
+    "name": "sideMode",
+    "type": "uint8"
+   },
+   {
+    "name": "maxTotalNotional6dec",
+    "type": "uint128"
+   },
+   {
+    "name": "maxLeverageOverallBps",
+    "type": "uint32"
+   },
+   {
+    "name": "dailyLossLimit6dec",
+    "type": "uint128"
+   },
+   {
+    "name": "drawdownBps",
+    "type": "uint32"
+   },
+   {
+    "name": "feeCapWindow6dec",
+    "type": "uint128"
+   },
+   {
+    "name": "opsPerWindow",
+    "type": "uint64"
+   },
+   {
+    "name": "windowLenMs",
+    "type": "uint64"
+   },
+   {
+    "name": "activeFromMsOfDay",
+    "type": "uint32"
+   },
+   {
+    "name": "activeToMsOfDay",
+    "type": "uint32"
+   },
+   {
+    "name": "expiresMs",
+    "type": "uint64"
+   },
+   {
+    "name": "enabled",
+    "type": "bool"
+   },
+   {
+    "name": "nonce",
+    "type": "uint64"
+   }
+  ],
+  "SetAgentMarketLimit": [
+   {
+    "name": "owner",
+    "type": "address"
+   },
+   {
+    "name": "agent",
+    "type": "address"
+   },
+   {
+    "name": "pair",
+    "type": "uint32"
+   },
+   {
+    "name": "allowed",
+    "type": "bool"
+   },
+   {
+    "name": "maxOrder18dec",
+    "type": "uint128"
+   },
+   {
+    "name": "maxPosition18dec",
+    "type": "uint128"
+   },
+   {
+    "name": "maxLeverageBps",
+    "type": "uint32"
+   },
+   {
+    "name": "nonce",
+    "type": "uint64"
+   }
+  ],
+  "RegisterAgentV2": [
+   {
+    "name": "owner",
+    "type": "address"
+   },
+   {
+    "name": "agent",
+    "type": "address"
+   },
+   {
+    "name": "name",
+    "type": "string"
+   },
+   {
+    "name": "mandate",
+    "type": "string"
+   },
+   {
+    "name": "expiresMs",
+    "type": "uint64"
+   },
+   {
+    "name": "nonce",
+    "type": "uint64"
+   }
+  ],
+  "SetAgentName": [
+   {
+    "name": "owner",
+    "type": "address"
+   },
+   {
+    "name": "agent",
+    "type": "address"
+   },
+   {
+    "name": "name",
+    "type": "string"
+   },
+   {
+    "name": "nonce",
+    "type": "uint64"
+   }
+  ],
+  "SetAgentPolicyV1": [
+   {
+    "name": "owner",
+    "type": "address"
+   },
+   {
+    "name": "agent",
+    "type": "address"
+   },
+   {
+    "name": "capsBitmask",
+    "type": "uint32"
+   },
+   {
+    "name": "sideMode",
+    "type": "uint8"
+   },
+   {
+    "name": "maxTotalExposure6dec",
+    "type": "uint128"
+   },
+   {
+    "name": "maxLeverageBps",
+    "type": "uint32"
+   },
+   {
+    "name": "dailyLossLimit6dec",
+    "type": "uint128"
+   },
+   {
+    "name": "dailyFeeCap6dec",
+    "type": "uint128"
+   },
+   {
+    "name": "opsPerWindow",
+    "type": "uint32"
+   },
+   {
+    "name": "opsWindowMs",
+    "type": "uint32"
+   },
+   {
+    "name": "activeFromMsOfDay",
+    "type": "uint32"
+   },
+   {
+    "name": "activeToMsOfDay",
+    "type": "uint32"
+   },
+   {
+    "name": "oracleBandBps",
+    "type": "uint32"
+   },
+   {
+    "name": "lockAutoClear",
+    "type": "bool"
+   },
+   {
+    "name": "expiresMs",
+    "type": "uint64"
+   },
+   {
+    "name": "enabled",
+    "type": "bool"
+   },
+   {
+    "name": "nonce",
+    "type": "uint64"
+   }
+  ],
+  "ClearAgentLock": [
+   {
+    "name": "owner",
+    "type": "address"
+   },
+   {
+    "name": "agent",
+    "type": "address"
+   },
+   {
+    "name": "lockSinceMs",
+    "type": "uint64"
+   },
+   {
+    "name": "nonce",
+    "type": "uint64"
+   }
+  ]
+ }
+}
