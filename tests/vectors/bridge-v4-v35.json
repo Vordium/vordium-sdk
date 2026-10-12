@@ -1,0 +1,130 @@
+{
+ "_about": "Bridge v4 contracts v3.5 -- the values the clients use. TEST-ONLY addresses; nothing here holds value.",
+ "interface": "v3.5",
+ "pins": {
+  "vault": {
+   "runtime": "b9b4ef3e5c9f242bda6708acc5c224689b05d26b918c003a1330d504a5fcb84e",
+   "runtimeBytes": 23781,
+   "creation": "a468c04cf424248d6b1a4007de9040294471932340ecc5ab92a0b8f178394708",
+   "creationBytes": 42681
+  },
+  "handler": {
+   "runtime": "22ce002c903bc47181375a8bc5658111b9327a5ca6e6569122785f4abd8a32c4",
+   "runtimeBytes": 11242,
+   "creation": "03880ed503169f0e4ef908dd70bb6d110eace8620fb50c3939d6f8ef51685d26",
+   "creationBytes": 11774
+  },
+  "setRules": {
+   "runtime": "0240b522204b01e84b837954214462fae35fb5e28e9f5952145b434fbb510040",
+   "runtimeBytes": 2662
+  },
+  "testnetVault": {
+   "runtime": "fc23e84c2f73809bc8896032d45399babf28dacf259221c23d1cf4ee8840d86e",
+   "runtimeBytes": 22471
+  }
+ },
+ "vault": "0xeBbaa620Ee72874237172A5DF16723f81Bd47642",
+ "handler": "0xe435417ff339c1734760521f31007410d607ba67",
+ "setRules": "0x0f1bbe60e9eeae8d126eceaec5336c30258361f4",
+ "testNetwork": {
+  "chainId": 421614,
+  "vault": "0xe74C2a499934414FAC3495644635B8dd7db2EbCd",
+  "handler": "0x086f4C4cb1AA9895B89ceca1A44fAc11eA549FC7",
+  "setRules": "0xC9331637E8a46D330348d6545E053Ab503a8FF97"
+ },
+ "depositStatuses": [
+  "pending",
+  "credited",
+  "waiting",
+  "stranded",
+  "not accepted"
+ ],
+ "reasonKeys": [
+  "waiting",
+  "stranded",
+  "rescued",
+  "below_minimum",
+  "above_per_deposit_limit",
+  "not_completed",
+  "other"
+ ],
+ "publicLines": {
+  "waiting": "Waiting: deposits are paused or at a limit. It will be credited when they reopen.",
+  "stranded": "Waiting for a recovery: the deposit's account could not be read. Nothing is lost.",
+  "rescued": "Owed to you on Arbitrum by a recovery: claim it there."
+ },
+ "handlerReasons": {
+  "waitsAsRecord": [
+   1,
+   3,
+   4
+  ],
+  "revertsWhileLocked": [
+   4
+  ],
+  "owedToBeneficiary": [
+   2,
+   7,
+   8
+  ],
+  "stranded": [
+   5
+  ],
+  "nothingOwed": [
+   6
+  ],
+  "rescued": 9
+ },
+ "rescuedRowExample": {
+  "account": null,
+  "amount_6dec": "9000000",
+  "as_of": {
+   "height": 1002
+  },
+  "chain_id": 42161,
+  "claim": {
+   "amount_6dec": "9000000",
+   "by": "0x4545454545454545454545454545454545454545",
+   "chain_id": 42161,
+   "handler": "0xe435417ff339c1734760521f31007410d607ba67"
+  },
+  "credited_height": null,
+  "deposit_id": null,
+  "kind": "cctp",
+  "nonce": "0x0202020202020202020202020202020202020202020202020202020202020202",
+  "reason": "rescued",
+  "source_chain_id": null,
+  "source_domain": 26,
+  "source_tx": null,
+  "status": "not accepted",
+  "text": "Owed to you on Arbitrum by a recovery: claim it there.",
+  "vault_id": 1,
+  "vault_tx": "0xe1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"
+ },
+ "vaultsReadFieldsExample": {
+  "address": "0xebbaa620ee72874237172a5df16723f81bd47642",
+  "cctp_domain": 3,
+  "evm_domains": [
+   0,
+   26
+  ],
+  "handler": "0xe435417ff339c1734760521f31007410d607ba67",
+  "own_addresses": [
+   "0xebbaa620ee72874237172a5df16723f81bd47642",
+   "0xe435417ff339c1734760521f31007410d607ba67",
+   "0x0f1bbe60e9eeae8d126eceaec5336c30258361f4",
+   "0x7777777777777777777777777777777777777777"
+  ],
+  "set_rules": "0x0f1bbe60e9eeae8d126eceaec5336c30258361f4",
+  "vordium_contracts": [
+   "0x0000000000000000000000007777777777777777777777777777777777777777",
+   "0x000000000000000000000000e435417ff339c1734760521f31007410d607ba67",
+   "0xabababababababababababababababababababababababababababababababab"
+  ]
+ },
+ "withdrawalStatuses": [
+  "pending",
+  "paid",
+  "refunded"
+ ]
+}

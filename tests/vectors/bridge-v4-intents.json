@@ -1,0 +1,125 @@
+{
+ "about": "WithdrawIntentV4 test vectors (the user's withdrawal, VordCore domain, signs a deadline). TEST-ONLY keys: keccak256(\"vordium-v4-test-account-N\" / \"vordium-v4-test-arc-recipient\").",
+ "domain": {
+  "vordcore101101": "0x68b86feeb9a9d9d471c3355da4719f2ce6a2330fbde6dad54d815783dacab34b",
+  "vordcoreSalt": "0x8590981a62e73d4fe04427a68536a1a63f3acb4765e41116859ab126c20099a2",
+  "vordcoreGenesis": "0x2c1c0679fa6ab8358f1d3e8d294a8d1c73ac2e2caf9079f1216abedc3d9fdf4f"
+ },
+ "vectors": [
+  {
+   "id": "WithdrawIntentV4-v3-1",
+   "description": "user intent: route 0 ('local'), paid on the Arbitrum vault (vault id 1)",
+   "typeString": "WithdrawIntentV4(address account,uint32 vaultId,bytes32 recipient,uint256 amount,uint256 nonce,uint8 routeKind,uint32 destinationDomain,uint256 maxFee,uint64 deadline)",
+   "typehash": "0x2592b09c25c168be1d67763da4f8e56629fafcbd09e925685f400bc509e4bb0d",
+   "structHash": "0xb6c12b5c9dfc3779afa2c76de88b45f06f424a789857a145bfccb8393dd81b9f",
+   "digest": "0xf8a5892309751934ff02a04aff9d859bc59411518fb76e2dbbfda1e03d8ee8ee",
+   "message": {
+    "account": "0x3219364FdFAeC2A60D14CDDA6E58Ec65eD33c009",
+    "vaultId": 1,
+    "recipient": "0x0000000000000000000000003219364fdfaec2a60d14cdda6e58ec65ed33c009",
+    "amount": "250000000",
+    "nonce": "1",
+    "routeKind": 0,
+    "destinationDomain": 3,
+    "maxFee": "0",
+    "deadline": 1900000000
+   },
+   "signatures": [
+    {
+     "signer": "0x3219364FdFAeC2A60D14CDDA6E58Ec65eD33c009",
+     "signature": "0xf750b24da75b2d62deb431fda8496ab7475687351305231e2a474414d6d656ee781dab31572356fbfe1d77c975f64263fb11e27ac5f19185642e60ebf5fea8b41c"
+    }
+   ]
+  },
+  {
+   "id": "WithdrawIntentV4-v3-2",
+   "description": "user intent: route 1 ('standard') to an Arc address (switched off at opening)",
+   "typeString": "WithdrawIntentV4(address account,uint32 vaultId,bytes32 recipient,uint256 amount,uint256 nonce,uint8 routeKind,uint32 destinationDomain,uint256 maxFee,uint64 deadline)",
+   "typehash": "0x2592b09c25c168be1d67763da4f8e56629fafcbd09e925685f400bc509e4bb0d",
+   "structHash": "0x782742c14d65e1c1ae70bda1312b6559f5c7cd2f1d749670d891b7d9ec8cd27b",
+   "digest": "0x7839e0fd70c1721a84665b773e2e5a2553bfa51315dcc4898973563b0d0d571d",
+   "message": {
+    "account": "0x3219364FdFAeC2A60D14CDDA6E58Ec65eD33c009",
+    "vaultId": 1,
+    "recipient": "0x0000000000000000000000008fed45485e06c1496e0df1b2e11a87c53e292e39",
+    "amount": "100000000",
+    "nonce": "2",
+    "routeKind": 1,
+    "destinationDomain": 26,
+    "maxFee": "1000000",
+    "deadline": 1900000000
+   },
+   "signatures": [
+    {
+     "signer": "0x3219364FdFAeC2A60D14CDDA6E58Ec65eD33c009",
+     "signature": "0xfb9ccc251c610e6f78288ce09b29991bb05a1e305a1cc0c1a4a57ee6668f017261f7d4fbdadcd5e10515b2aa380a0cc72c31b7a2be24ea4248b0404fa50a76fa1c"
+    }
+   ]
+  },
+  {
+   "id": "WithdrawIntentV4-v3-3",
+   "description": "user intent: route 3 ('standard-forwarded') to an Arc address (switched off at opening)",
+   "typeString": "WithdrawIntentV4(address account,uint32 vaultId,bytes32 recipient,uint256 amount,uint256 nonce,uint8 routeKind,uint32 destinationDomain,uint256 maxFee,uint64 deadline)",
+   "typehash": "0x2592b09c25c168be1d67763da4f8e56629fafcbd09e925685f400bc509e4bb0d",
+   "structHash": "0xc55fbbb9cf00f90d248e564173ebb65b532fe46d64c9060042c016bd3f0c7720",
+   "digest": "0x1df91763c27f54d5683c8e3a5341550ad5a24e34713b96a8da820e5dde5e2c0e",
+   "message": {
+    "account": "0xd2FCFDa97fA56Cddc0105ecb950CA3d9C9a63F57",
+    "vaultId": 1,
+    "recipient": "0x0000000000000000000000008fed45485e06c1496e0df1b2e11a87c53e292e39",
+    "amount": "100000000",
+    "nonce": "3",
+    "routeKind": 3,
+    "destinationDomain": 26,
+    "maxFee": "1300000",
+    "deadline": 1900000000
+   },
+   "signatures": [
+    {
+     "signer": "0xd2FCFDa97fA56Cddc0105ecb950CA3d9C9a63F57",
+     "signature": "0x07296f56cfced240cff5ef7b5ab5becfdcbb4ba31fd8e092b691c78123aad47a2fc509480a96f50cd5d8300678ecc4fac668ce9f01b4ea37b596b4be6772a68b1b"
+    }
+   ]
+  },
+  {
+   "id": "WithdrawIntentV4-v3-4",
+   "description": "the same intent as v3-1 one second later: the deadline is signed, so the digest differs",
+   "typeString": "WithdrawIntentV4(address account,uint32 vaultId,bytes32 recipient,uint256 amount,uint256 nonce,uint8 routeKind,uint32 destinationDomain,uint256 maxFee,uint64 deadline)",
+   "typehash": "0x2592b09c25c168be1d67763da4f8e56629fafcbd09e925685f400bc509e4bb0d",
+   "structHash": "0x4fd2c7a5485bdc725f2910c7839b47ecbb03adf851654b85b73d9b54f08f1934",
+   "digest": "0x28d716f96cd25c1f8b5f54fce2debf2267da368e41359df63907210477df46cc",
+   "message": {
+    "account": "0x3219364FdFAeC2A60D14CDDA6E58Ec65eD33c009",
+    "vaultId": 1,
+    "recipient": "0x0000000000000000000000003219364fdfaec2a60d14cdda6e58ec65ed33c009",
+    "amount": "250000000",
+    "nonce": "1",
+    "routeKind": 0,
+    "destinationDomain": 3,
+    "maxFee": "0",
+    "deadline": 1900000001
+   },
+   "signatures": [
+    {
+     "signer": "0x3219364FdFAeC2A60D14CDDA6E58Ec65eD33c009",
+     "signature": "0xa115f4ede88f80098cbbd30f10e163b0037a77d2d73bbab7d210cda78d25807e58f6d9db67f5966712aba4b8e7f0bd39337d6a2f2bd3ad7b0c6679da10e4f2e01b"
+    }
+   ]
+  }
+ ],
+ "submitExample": {
+  "vector": "WithdrawIntentV4-v3-1",
+  "body": {
+   "account": "0x3219364FdFAeC2A60D14CDDA6E58Ec65eD33c009",
+   "vault_id": 1,
+   "recipient": "0x0000000000000000000000003219364fdfaec2a60d14cdda6e58ec65ed33c009",
+   "amount_6dec": "250000000",
+   "nonce": "1",
+   "route_kind": 0,
+   "destination_domain": 3,
+   "max_fee_6dec": "0",
+   "deadline": "1900000000",
+   "signature": "0xf750b24da75b2d62deb431fda8496ab7475687351305231e2a474414d6d656ee781dab31572356fbfe1d77c975f64263fb11e27ac5f19185642e60ebf5fea8b41c"
+  }
+ }
+}

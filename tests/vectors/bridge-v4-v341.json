@@ -1,0 +1,99 @@
+{
+ "about": "Bridge v4 interface v3.4.1 test data for the client rules: the public lines and reason keys, the deposit row and the coarse deposit-allowed outcomes, each read from the frozen interface file.",
+ "interface": {
+  "file": "V4-INTERFACE-v3.4.1.md",
+  "sha256": "9eefbc762d9e022a5dc176900ec6934a3e5cc0b59d3eb1bdc3964602b926a3cb"
+ },
+ "publicLines": {
+  "2": "Not accepted: above the per-deposit limit. The USDC can be claimed back on Arbitrum by the deposit's account.",
+  "5": "Not accepted: the deposit's account could not be read. The USDC can be claimed back on Arbitrum by the address that sent it.",
+  "7": "Not accepted: the deposit could not be completed. The USDC can be claimed back on Arbitrum by the deposit's account.",
+  "waiting": "Waiting: deposits are paused or at a limit. It will be credited when they reopen."
+ },
+ "handlerReasons": {
+  "waits": [
+   1,
+   3,
+   4
+  ],
+  "refundsToBeneficiary": [
+   2,
+   7,
+   8
+  ],
+  "refundsToSender": [
+   5
+  ],
+  "rescued": 9
+ },
+ "depositRow": {
+  "fields": [
+   "status",
+   "reason",
+   "text",
+   "kind",
+   "account",
+   "amount_6dec",
+   "vault_id",
+   "chain_id",
+   "deposit_id",
+   "source_domain",
+   "nonce",
+   "source_chain_id",
+   "source_tx",
+   "vault_tx",
+   "claim",
+   "credited_height",
+   "as_of"
+  ],
+  "statuses": [
+   "pending",
+   "credited",
+   "not accepted"
+  ],
+  "reasons": {
+   "above_per_deposit_limit": [
+    2
+   ],
+   "account_unreadable": [
+    5
+   ],
+   "not_completed": [
+    7
+   ],
+   "below_minimum": [
+    6,
+    8
+   ],
+   "other": []
+  }
+ },
+ "depositAllowed": {
+  "outcomes": {
+   "accepted": [
+    0
+   ],
+   "waits": [
+    1,
+    3,
+    4
+   ],
+   "above_per_deposit_limit": [
+    2
+   ]
+  },
+  "rule": "read allowed; from code only waits (1, 3, 4) vs above the per-deposit limit (2)"
+ },
+ "reads": {
+  "ok": "ok",
+  "unavailable": "unavailable",
+  "unknown404": {
+   "status": "unknown"
+  },
+  "notFound404": {
+   "error": "not found",
+   "code": "not_found"
+  }
+ },
+ "refundRecipient": "the client refuses the zero address, the handler and the vault"
+}
