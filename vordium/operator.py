@@ -84,12 +84,14 @@ class SessionSigner:
     def from_keystore(cls, path: str, password: Optional[str] = None) -> "SessionSigner":
         """
         Load a session key from a JSON file. Supports both a plain
-        ``{"private_key": "0x.."}`` file (like Wallet.save) and a standard
-        eth keystore (needs ``password``).
+        ``{"private_key": "0x.."}`` file (like Wallet.save; refused if other
+        users can read it) and a standard eth keystore (needs ``password``).
         """
         with open(path) as f:
             data = json.load(f)
         if "private_key" in data:
+            from .wallet import check_key_file_mode
+            check_key_file_mode(path)   # a plain key file must be the owner's only (mode 0600)
             return cls(private_key=data["private_key"])
         if password is None:
             raise ValueError("keystore is encrypted -- password required")
@@ -344,8 +346,11 @@ class Operator:
         signer: SessionSigner,
         box: Optional[AgentBox] = None,
         submit_url: Optional[str] = None,
+        specs: Optional[object] = None,
     ):
         self.owner = owner
+        # the market rules (tick, lot, minimums): read from the node for each order unless a read is given here
+        self.specs = specs
         self.signer = signer
         self.box = box or AgentBox()
         # order intake HTTP base; defaults to the node RPC host.
@@ -353,6 +358,24 @@ class Operator:
         # The signer signs under the process network's domain; before it signs, the node this client posts to must
         # serve that same network (its /status), or nothing is signed.
         self._node = NodeDomain(self.submit_url, get_network())
+
+    def _spec(self, pair_id: int):
+        from . import units
+
+        return units.resolve(getattr(self, "specs", None), self.submit_url, pair_id, self.box.timeout)
+
+    def _on_steps(self, pair_id, side, size, price, order_type):
+        """``size`` and ``price`` (signed integers) as they will be signed: on the market's tick and lot."""
+        from . import units
+
+        spec = self._spec(pair_id)
+        size = units.snap_size_18dec(size, spec)
+        if order_type in PRICED:
+            price = units.snap_price_8dec(price, spec, side, place_route=True)
+            units.check_notional(size, price, spec)
+        else:
+            price = units.whole(price, "price")
+        return size, price
 
     def _checked_signer(self) -> SessionSigner:
         self._node.identity()          # raises NetworkMismatch when the node serves another network
@@ -405,10 +428,18 @@ class Operator:
 
         If ``precheck`` and ``caps`` are provided, the local
         ``agent_cap_check`` runs first and raises ``CapError`` on violation.
+
+        Before anything is signed, ``size`` and a LIMIT ``price`` go onto the
+        market's lot and tick (read from ``GET /markets/specs`` unless the
+        operator holds ``specs``): a buy's price rounds down and a sell's up, at
+        most 6 decimals; the size rounds down. A size that rounds to 0, below the
+        market's smallest size, or a limit order below the network's smallest
+        order value raises ``vordium.units.OrderValueError``.
         """
         _wire(SIDE_NAMES, side, "side")
         _wire(ORDER_TYPE_NAMES, order_type, "order_type")
         refuse_unavailable(order_type, trigger_price_8dec, trigger_dir)
+        size, price = self._on_steps(pair_id, side, size, price, order_type)
         if precheck and caps is not None:
             agent_cap_check(
                 caps,
@@ -505,14 +536,21 @@ class Operator:
         ``take_profit_8dec`` and ``stop_loss_8dec`` are canonical u64 8-dec
         prices; ``0`` leaves that leg unset. Session-key signed -- the ``owner``
         field stays the trading account and the session key signs the SetTpSl
-        EIP-712 digest.
+        EIP-712 digest. Each price goes to the market's NEAREST tick first.
         """
+        take_profit_8dec, stop_loss_8dec = self._triggers(pair_id, take_profit_8dec, stop_loss_8dec)
         sig = self._checked_signer().sign_set_tpsl(
             self.owner, pair_id, position_id, take_profit_8dec, stop_loss_8dec
         )
         body = set_tpsl_body(self.owner, self.signer.address, pair_id, position_id, take_profit_8dec,
                              stop_loss_8dec, sig)
         return self._post("/tpsl/set", body)
+
+    def _triggers(self, pair_id, take_profit_8dec, stop_loss_8dec):
+        from . import units
+
+        spec = self._spec(pair_id)
+        return units.snap_trigger_8dec(take_profit_8dec, spec), units.snap_trigger_8dec(stop_loss_8dec, spec)
 
     # -- stop orders ---------------------------------------------------------
     def place_stop_order(
@@ -545,8 +583,12 @@ class Operator:
         order_type: int = PlaceOrderType.LIMIT, reduce_only: bool = False,
         post_only: bool = False, trigger_price_8dec: int = 0, trigger_dir: int = 0,
     ) -> dict:
-        """Build the signed PlaceOrder body without submitting (for tests/dry-run)."""
+        """Build the signed PlaceOrder body without submitting (for tests/dry-run); the size and price go onto the
+        market's lot and tick as in :meth:`place_order`."""
+        _wire(SIDE_NAMES, side, "side")
+        _wire(ORDER_TYPE_NAMES, order_type, "order_type")
         refuse_unavailable(order_type, trigger_price_8dec, trigger_dir)
+        size, price = self._on_steps(pair_id, side, size, price, order_type)
         price = price if order_type in PRICED else 0
         sig = self._checked_signer().sign_place(
             self.owner, pair_id, side, size, price, leverage_bps, client_nonce,
@@ -560,7 +602,8 @@ class Operator:
     def build_set_tpsl_body(
         self, pair_id, position_id, take_profit_8dec=0, stop_loss_8dec=0,
     ) -> dict:
-        """Build the signed SetTpSl body without submitting (for tests/dry-run)."""
+        """Build the signed SetTpSl body without submitting (for tests/dry-run); prices to the nearest tick."""
+        take_profit_8dec, stop_loss_8dec = self._triggers(pair_id, take_profit_8dec, stop_loss_8dec)
         sig = self._checked_signer().sign_set_tpsl(
             self.owner, pair_id, position_id, take_profit_8dec, stop_loss_8dec
         )

@@ -1,5 +1,6 @@
 import os
 import asyncio
+import warnings
 import requests
 from web3 import Web3
 from .network import get_network
@@ -11,27 +12,33 @@ class Agent:
     Vordium AI Agent
 
     Usage:
-        agent = Agent()
+        agent = Agent(key_file="~/.vordium/<address>.key")   # or Agent(private_key), or VORDIUM_PRIVATE_KEY
         print(agent.address)
         print(agent.balance)
         await agent.run()
+
+    With no key at all, the agent makes a new key held only in memory and exposes its address; nothing is printed or
+    written. Keep it with ``agent.save(path)`` (a new 0600 file) before you fund it.
     """
 
-    def __init__(self, private_key: str = None):
+    def __init__(self, private_key: str = None, key_file: str = None):
         self._net = get_network()  # resolve_network() at client init
         self._w3 = Web3(Web3.HTTPProvider(self._net.rpc_url))
 
+        if private_key and key_file:
+            raise ValueError("pass private_key or key_file, not both")
         if private_key:
             self._wallet = Wallet.from_key(private_key)
+        elif key_file:
+            self._wallet = Wallet.load(key_file)
         elif os.getenv('VORDIUM_PRIVATE_KEY'):
             self._wallet = Wallet.from_key(os.getenv('VORDIUM_PRIVATE_KEY'))
         else:
             self._wallet = Wallet.create()
-            print("New agent wallet created!")
-            print(f"Address:     {self._wallet.address}")
-            print(f"Private Key: {self._wallet.private_key}")
-            print("Save this to your .env file:")
-            print(f"VORDIUM_PRIVATE_KEY={self._wallet.private_key}")
+            warnings.warn(
+                "no key given: this agent uses a new key held only in memory. "
+                "Call agent.save(path) to keep it before you fund its address.",
+                stacklevel=2)
 
     @property
     def address(self) -> str:
@@ -40,6 +47,10 @@ class Agent:
     @property
     def private_key(self) -> str:
         return self._wallet.private_key
+
+    def save(self, path: str = None) -> str:
+        """Write this agent's key to a NEW file with mode 0600 (default ``~/.vordium/<address>.key``); returns the path."""
+        return self._wallet.save(path)
 
     @property
     def balance(self) -> float:
@@ -125,3 +136,5 @@ class Agent:
 
     def __repr__(self):
         return f"Agent(address={self.address})"
+
+    __str__ = __repr__

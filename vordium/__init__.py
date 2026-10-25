@@ -3,7 +3,7 @@ Vordium SDK — Python library for AI agents on Vordium Chain.
 
 Usage:
     from vordium import Agent
-    agent = Agent()
+    agent = Agent(key_file="~/.vordium/<address>.key")   # a file written by `vordium init`
     print(agent.address)
     print(agent.balance)
 
@@ -26,7 +26,7 @@ from .network import (
     NETWORKS,
 )
 from .agent import Agent
-from .wallet import Wallet
+from .wallet import Wallet, KeyFileError
 from .chain import Chain
 from .dex import Vordex
 
@@ -68,10 +68,14 @@ from .network import NetworkMismatch
 from .node_domain import NodeDomain, NodeIdentity, node_identity
 from .feeds import Feeds, FeedError, SeqTracker, Book
 
-__version__ = "1.4.6"
+# Exact order units on each market's tick and lot.
+from . import units
+from .units import OrderValueError, SpecsUnavailable, NO_RULES
+
+__version__ = "1.4.9"
 __author__ = "Vordium"
 __all__ = [
-    "Agent", "Wallet", "Chain", "Vordex",
+    "Agent", "Wallet", "KeyFileError", "Chain", "Vordex",
     # network discovery
     "Network", "NetworkResolutionError", "resolve_network", "get_network",
     "set_network", "reset_network", "use_network", "api_base", "NETWORKS",
@@ -97,4 +101,6 @@ __all__ = [
     "nonce_clock", "round_price", "round_size", "OpenOrder", "Position", "NetworkMismatch", "NodeDomain", "NodeIdentity",
     "node_identity",
     "Feeds", "FeedError", "SeqTracker", "Book",
+    # exact order units on each market's tick and lot
+    "units", "OrderValueError", "SpecsUnavailable", "NO_RULES",
 ]

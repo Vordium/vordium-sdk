@@ -202,9 +202,16 @@ Prices are 8-decimal integers, sizes 18-decimal integers and USDC amounts 6-deci
 ## CLI
 
 ```bash
-vordium init         # scaffold a config
-vordium balance 0x…  # read a native VORD balance
+vordium init                          # new key in ~/.vordium/<address>.key (mode 0600)
+vordium init --out ./agent.key        # or a path you choose; an existing file is never overwritten
+vordium balance 0x…                   # read the native VORD balance of an address
+vordium send 0x… 1.5 --key-file ./agent.key
 ```
+
+The SDK and the CLI never print a private key. `vordium init` prints only the new address and the key file's path.
+A key file is written once with mode 0600; a key file that other users can read is refused when it is loaded.
+In Python, `Agent(key_file=...)` or `Wallet.load(path)` read one, and `agent.save(path)` writes one. `Agent()` with no
+key makes a new key held only in memory; save it before you fund its address.
 
 ## Units (do not mix)
 
@@ -212,6 +219,22 @@ vordium balance 0x…  # read a native VORD balance
 |--------------------|----------------|----------------|
 | signed order (EIP-712 / POST) | uint64, 8 decimals | uint128, 18 decimals |
 | read endpoints (`/oracle/*`)  | 1e6 integers / floats | — |
+
+Each market has a price step (tick) and a size step (lot), published in `GET /markets/specs`; the chain does not apply
+an order that is off them. Every order the SDK signs is put on them first (`vordium.units`): numbers are read exactly
+from their decimal form (a float is never multiplied), a buy's limit price rounds down and a sell's up (never a worse
+price than asked), a take-profit or stop-loss trigger goes to the nearest tick, and a size rounds down onto the lot
+(never more than asked). A size that rounds to 0, a size below the market's smallest size, or a limit order below the
+network's smallest order value raises `OrderValueError` before anything is signed.
+
+```python
+from vordium import Vordex, units
+
+vx = Vordex()                                     # reads the market rules from the node for each order
+vx.place_order(session_key, owner, 1, 0, "0.01234", "2420.57")    # signed as 0.0123 at 2420.5 on a 0.1 tick, 0.0001 lot
+spec = vx.pair_spec(1)
+units.price_8dec("2420.57", spec, "buy"), units.size_18dec(0.01234, spec)
+```
 
 ## Links
 

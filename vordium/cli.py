@@ -1,7 +1,13 @@
 import argparse
+import os
+import sys
 from .agent import Agent
 from .chain import Chain
 from .network import get_network
+from .wallet import KeyFileError, default_key_dir, generate_key_file
+
+KEY_HELP = ("key file written by 'vordium init' (mode 0600); without it the key is read from the "
+            "VORDIUM_PRIVATE_KEY environment variable")
 
 BANNER = """
 ==========================================
@@ -12,22 +18,29 @@ BANNER = """
 """
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(
         prog='vordium',
         description='Vordium Agent CLI - The AI Layer'
     )
     subparsers = parser.add_subparsers(dest='command')
 
-    subparsers.add_parser('init', help='Create new agent wallet')
+    init = subparsers.add_parser(
+        'init', help='Create a new key and write it to a key file (mode 0600)',
+        description=("Create a new key and write it to a NEW key file with mode 0600. Only the address and the "
+                     f"file's path are printed, never the key. Default file: {default_key_dir()}/<address>.key"))
+    init.add_argument('--out', metavar='PATH',
+                      help=f'where to write the key file (default {default_key_dir()}/<address>.key); '
+                           'an existing file is never overwritten')
     subparsers.add_parser('status', help='Check chain status')
 
-    bal = subparsers.add_parser('balance', help='Check VORD balance')
-    bal.add_argument('address', nargs='?')
+    bal = subparsers.add_parser('balance', help='Check the VORD balance of an address')
+    bal.add_argument('address', nargs='?', help='the address to read (required)')
 
     send = subparsers.add_parser('send', help='Send VORD')
     send.add_argument('to')
     send.add_argument('amount', type=float)
+    send.add_argument('--key-file', metavar='PATH', help=KEY_HELP)
 
     run = subparsers.add_parser('run', help='Run agent script')
     run.add_argument('script')
@@ -36,37 +49,58 @@ def main():
     reg.add_argument('--name', required=True)
     reg.add_argument('--strategy', default='trading')
 
-    args = parser.parse_args()
+    parser.add_argument('--key-file', metavar='PATH', dest='key_file_main',
+                        help=KEY_HELP + ' (for the interactive terminal)')
+
+    args = parser.parse_args(argv)
     print(BANNER)
 
     if args.command == 'init':
-        cmd_init()
+        return cmd_init(args)
     elif args.command == 'status':
-        cmd_status()
+        return cmd_status()
     elif args.command == 'balance':
-        cmd_balance(args)
+        return cmd_balance(args)
     elif args.command == 'send':
-        cmd_send(args)
+        return cmd_send(args)
     elif args.command == 'run':
-        cmd_run(args)
+        return cmd_run(args)
     elif args.command == 'register':
-        cmd_register(args)
+        return cmd_register(args)
     else:
-        cmd_interactive()
+        return cmd_interactive(args)
 
 
-def cmd_init():
-    print("Initializing new agent...\n")
-    agent = Agent()
-    print(f"\n{'='*50}")
-    print(f"Address:     {agent.address}")
-    print(f"Private Key: {agent.private_key}")
-    print(f"{'='*50}")
-    print("\nSave your private key to .env:")
-    print(f"VORDIUM_PRIVATE_KEY={agent.private_key}\n")
-    print(f"Balance: {agent.balance} VORD")
-    print(f"Explorer: {get_network().explorer_url}/address/{agent.address}")
-    print("\nAgent ready to trade.")
+def _refuse(message: str) -> int:
+    print(message, file=sys.stderr)
+    return 2
+
+
+def _agent_with_key(key_file):
+    """An Agent from a key file or VORDIUM_PRIVATE_KEY -- never a new key. None when neither is given."""
+    if key_file:
+        return Agent(key_file=key_file)
+    if os.getenv('VORDIUM_PRIVATE_KEY'):
+        return Agent()
+    return None
+
+
+NO_KEY = ("no key: pass --key-file PATH (a file written by 'vordium init') or set VORDIUM_PRIVATE_KEY. "
+          "The CLI never makes a new key for this.")
+
+
+def cmd_init(args=None):
+    print("Creating a new agent key...\n")
+    try:
+        address, path = generate_key_file(getattr(args, 'out', None))
+    except (KeyFileError, OSError) as e:
+        return _refuse(f"Not written: {e}")
+    print(f"Address:  {address}")
+    print(f"Key file: {path}  (mode 0600; the key is not shown)")
+    print("\nKeep this file private and back it up. Use it with:")
+    print(f"  vordium send <to> <amount> --key-file {path}")
+    print(f"  Agent(key_file=\"{path}\")   # in Python")
+    return 0
 
 
 def cmd_status():
@@ -85,28 +119,30 @@ def cmd_status():
 
 
 def cmd_balance(args):
+    if not args.address:
+        return _refuse("vordium balance needs an address: vordium balance 0x...")
     chain = Chain()
-    addr = args.address if args.address else Agent().address
-    print(f"Address: {addr}")
-    print(f"Balance: {chain.get_balance(addr)} VORD")
+    print(f"Address: {args.address}")
+    print(f"Balance: {chain.get_balance(args.address)} VORD")
+    return 0
 
 
 def cmd_send(args):
-    agent = Agent()
-    print(f"Sending {args.amount} VORD to {args.to}...")
+    try:
+        agent = _agent_with_key(args.key_file)
+    except (KeyFileError, OSError, ValueError) as e:
+        return _refuse(f"Not sent: {e}")
+    if agent is None:
+        return _refuse(f"Not sent: {NO_KEY}")
+    print(f"Sending {args.amount} VORD to {args.to} from {agent.address}...")
     agent.send(args.to, args.amount)
+    return 0
 
 
 def cmd_register(args):
-    agent = Agent()
-    if agent.is_registered():
-        reg = agent.get_registration()
-        print(f"Already registered: Agent #{reg['id']} '{reg['name']}' ({reg['strategy_type']})")
-        return
-    print(f"Registering '{args.name}' (strategy: {args.strategy}) on-chain...")
-    agent.register_on_chain(args.name, args.strategy)
-    reg = agent.get_registration()
-    print(f"Agent #{reg['id']} registered.")
+    return _refuse(
+        "Agents are not registered on a contract. The owner registers an agent with RegisterAgentV2 "
+        "(vordium.agent_ops) and sets its policy with SetAgentPolicyV1, signed by the owner key.")
 
 
 def cmd_run(args):
@@ -115,9 +151,14 @@ def cmd_run(args):
         exec(f.read())
 
 
-def cmd_interactive():
+def cmd_interactive(args=None):
+    try:
+        agent = _agent_with_key(getattr(args, 'key_file_main', None))
+    except (KeyFileError, OSError, ValueError) as e:
+        return _refuse(str(e))
+    if agent is None:
+        return _refuse(f"{NO_KEY}\nRun 'vordium --help' for the commands.")
     chain = Chain()
-    agent = Agent()
     print(f"Connected: {get_network().chain_name}")
     print(f"Block:     {chain.block_number:,}")
     print(f"Address:   {agent.address}")
@@ -150,4 +191,4 @@ def cmd_interactive():
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

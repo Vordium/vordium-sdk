@@ -82,15 +82,17 @@ def test_place_body_names_side_and_type_and_carries_the_signed_values(monkeypatc
     assert _recovers(d, body["signature"], session.address)
 
 
-@pytest.mark.parametrize("given,kept", [(1343.87, 134_387_000_000), (1343.8712346, 134_387_123_500),
-                                        (0.1234567, 12_345_700), (2_400.12, 240_012_000_000)])
-def test_a_limit_price_is_signed_at_the_six_decimals_the_chain_keeps(monkeypatch, given, kept):
+@pytest.mark.parametrize("side,given,kept", [(dex.BUY, 1343.87, 134_387_000_000), (dex.BUY, 1343.8712346, 134_387_123_400),
+                                             (dex.SELL, 1343.8712346, 134_387_123_500), (dex.BUY, 0.1234567, 12_345_600),
+                                             (dex.SELL, 0.1234567, 12_345_700), (dex.SELL, 2_400.12, 240_012_000_000)])
+def test_a_limit_price_is_signed_at_the_six_decimals_the_chain_keeps(monkeypatch, side, given, kept):
+    """At the 6 decimals the intake keeps, a buy's price rounds down and a sell's up (never a worse price)."""
     sent = _capture(monkeypatch)
     session = Account.create()
-    dex.Vordex(rpc_url="http://rpc.invalid").place_order(session.key.hex(), OWNER, 1, dex.BUY, 1, given, client_nonce=9)
+    dex.Vordex(rpc_url="http://rpc.invalid").place_order(session.key.hex(), OWNER, 1, side, 1, given, client_nonce=9)
     body = sent[0][1]
     assert round(body["price"] * 10**6) * 100 == kept and kept % 100 == 0
-    d = place_order_digest(OWNER, 1, dex.BUY, 10**18, kept, 10_000, dex.LIMIT, False, 9, False, 0, 0)
+    d = place_order_digest(OWNER, 1, side, 10**18, kept, 10_000, dex.LIMIT, False, 9, False, 0, 0)
     assert _recovers(d, body["signature"], session.address)
 
 

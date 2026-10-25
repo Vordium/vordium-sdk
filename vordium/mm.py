@@ -322,6 +322,11 @@ def read_answer(status_code: Optional[int], j: Any, retry_after: Optional[str] =
     code = j.get("code")
     if status_code == 429 and not code:
         code = "mempool_full"
+    if code == "agent_refused":   # an agent check at intake: the reason key, and its meaning as the chain gives it
+        reason = j.get("reason") if isinstance(j.get("reason"), str) else ""
+        meaning = j.get("meaning") if isinstance(j.get("meaning"), str) and j.get("meaning") else (
+            f"The agent's action was refused ({reason or 'no reason given'}).")
+        return Submitted(False, status_code, Refusal("agent_refused", meaning, reason, ra))
     return Submitted(False, status_code, refusal(code, j.get("error") or j.get("reason") or (f"HTTP {status_code}" if status_code else ""), ra))
 
 
@@ -368,12 +373,18 @@ class MarketMaker:
     ``network`` (or the network set with :func:`vordium.network.set_network`, or the environment pins) when one is
     configured; a mismatch raises :class:`vordium.network.NetworkMismatch` before anything is signed. A
     ``domain_separator`` given here must equal the node's (it pins, never overrides). Nonces come from the account's one
-    clock (:func:`nonce_clock`) unless ``nonce`` is given. ``post``/``get``/``identity`` are injectable for tests."""
+    clock (:func:`nonce_clock`) unless ``nonce`` is given. ``post``/``get``/``identity`` are injectable for tests.
+
+    Every price and size a write signs is first put on the market's tick and lot (:mod:`vordium.units`): a bid price
+    down, an ask price up, a size down; a size that rounds to 0 or an order below the network's minimum is refused before
+    signing. The rules are read from the node's ``GET /markets/specs`` for each write unless ``specs`` (a read you hold,
+    or :data:`vordium.units.NO_RULES` for a dry run) is given."""
 
     def __init__(self, rpc_url: str, signer_key: str, owner: str, domain_separator: Optional[bytes] = None,
                  timeout: float = 10.0, nonce: Optional[NonceClock] = None, post=None, get=None,
-                 network=None, identity: Optional[Callable[[], NodeIdentity]] = None):
+                 network=None, identity: Optional[Callable[[], NodeIdentity]] = None, specs: Any = None):
         self.rpc_url = rpc_url.rstrip("/")
+        self._specs = specs
         self.owner = owner
         self._key = signer_key
         self.timeout = timeout
@@ -416,6 +427,7 @@ class MarketMaker:
         """Sign and submit 1..``max_actions`` actions in one batch. Cancels apply first, then each place on its own."""
         if not 1 <= len(actions) <= max_actions:
             raise MMError(f"a batch holds 1 to {max_actions} actions, not {len(actions)}")
+        actions = self.on_steps(actions)
         n = nonce if nonce is not None else self.nonce()
         sig = self._sig(batch_struct_hash(self.owner, n, actions))
         return self._send("/order/batch-signed", batch_body(self.owner, n, actions, sig), n)
@@ -426,11 +438,27 @@ class MarketMaker:
         sig = self._sig(cancel_all_struct_hash(self.owner, pair_id, n))
         return self._send("/order/cancel-all", cancel_all_body(self.owner, pair_id, n, sig), n)
 
-    def modify(self, order_id: int, new_price_8dec: int, new_size_18dec: int, client_nonce: Optional[int] = None) -> Submitted:
+    def modify(self, order_id: int, new_price_8dec: int, new_size_18dec: int, client_nonce: Optional[int] = None,
+               pair_id: Optional[int] = None, side: Optional[str] = None) -> Submitted:
         """Cancel-and-replace: the order leaves the book and a NEW order (new id, this ``client_nonce``, no time
-        priority) rests at the new price and size. If the new order would not rest, nothing changes."""
+        priority) rests at the new price and size. If the new order would not rest, nothing changes.
+
+        The new price and size go onto the order's market tick and lot (a bid down, an ask up, the size down). The
+        market and side come from ``pair_id`` and ``side``, else from the account's open orders (an order that is not
+        listed there is refused before signing)."""
         if _uint(new_size_18dec, _U128, "new_size_18dec") == 0 or _uint(new_price_8dec, _U64, "new_price_8dec") == 0:
             raise MMError("a modified order needs a price and a size")
+        from . import units
+
+        if pair_id is None or side is None:
+            mine = [o for o in self.open_orders() if o.order_id == int(order_id)]
+            if not mine:
+                raise units.OrderValueError(f"order {order_id} is not open on this account; pass pair_id and side")
+            pair_id, side = mine[0].pair_id, mine[0].side
+        spec = units.resolve(getattr(self, "_specs", None), self.rpc_url, pair_id, self.timeout, self._get)
+        new_price_8dec = units.snap_price_8dec(new_price_8dec, spec, side)
+        new_size_18dec = units.snap_size_18dec(new_size_18dec, spec)
+        units.check_notional(new_size_18dec, new_price_8dec, spec)
         n = client_nonce if client_nonce is not None else self.nonce()
         sig = self._sig(modify_v2_struct_hash(self.owner, order_id, new_price_8dec, new_size_18dec, n))
         return self._send("/order/modify", modify_body(self.owner, order_id, new_price_8dec, new_size_18dec, n, sig), n)
@@ -440,6 +468,30 @@ class MarketMaker:
         :meth:`account`)."""
         sig = self._sig(set_mmp_struct_hash(self.owner, mmp, nonce))
         return self._send("/account/mmp", mmp_body(self.owner, mmp.checked(), nonce, sig), nonce)
+
+    def on_steps(self, actions: Sequence[Action]) -> List[Action]:
+        """The batch as it will be signed: every place action's price and size on its market's tick and lot (one rules
+        read for the batch). Refuses, before signing, a size that rounds to 0 or an order below the network's minimum."""
+        from dataclasses import replace
+
+        from . import units
+
+        if not any(a.kind == PLACE for a in actions):
+            return list(actions)
+        rules = getattr(self, "_specs", None)
+        rules = rules if rules is not None else units.fetch_specs(self.rpc_url, self.timeout, self._get)
+        out = []
+        for a in actions:
+            if a.kind != PLACE:
+                out.append(a)
+                continue
+            spec = units.select(rules, a.pair_id)
+            side = "buy" if a.side == SIDES["buy"] else "sell"
+            price = units.snap_price_8dec(a.price_8dec, spec, side)        # a market order keeps price 0
+            size = units.snap_size_18dec(a.size_18dec, spec)
+            units.check_notional(size, price, spec)
+            out.append(replace(a, price_8dec=price, size_18dec=size))
+        return out
 
     # reads
     def specs(self) -> Dict[str, Any]:
@@ -471,21 +523,38 @@ class PairSpec:
     lot_18dec: int            # 0 = not enforced
     liquidation_fee_bps: Optional[int]
     maintenance_margin_bps: Optional[int]
+    min_size_18dec: int = 0       # the market's smallest size (0 = none published)
+    min_notional_6dec: int = 0    # the smallest order value the network takes (0 = none published)
+
+
+def _count(v: Any) -> int:
+    if isinstance(v, bool):
+        raise MMError("a market rule is not a number")
+    if isinstance(v, int) and v >= 0:
+        return v
+    if isinstance(v, str) and v.isdigit():
+        return int(v)
+    if v is None or v == "":
+        return 0
+    raise MMError(f"a market rule is not a whole number ({v!r})")
 
 
 def pair_specs(specs_read: Dict[str, Any]) -> Dict[int, PairSpec]:
-    """Each pair's tick, lot, liquidation fee and maintenance margin from a ``/markets/specs`` read."""
+    """Each pair's tick, lot, smallest size, liquidation fee and maintenance margin from a ``/markets/specs`` read, with
+    the network's smallest order value (``min_order_notional_6dec``)."""
     out: Dict[int, PairSpec] = {}
     s = (specs_read or {}).get("specs") or {}
+    min_notional = _count(s.get("min_order_notional_6dec"))
     for p in s.get("pairs") or []:
         pr = p.get("pair") or {}
         pid = pr.get("pair_id")
         if not isinstance(pid, int):
             continue
-        out[pid] = PairSpec(pid, str(pr.get("symbol") or pr.get("name") or pid), int(p.get("tick_8dec") or 0),
-                            int(p.get("lot_18dec") or 0),
+        out[pid] = PairSpec(pid, str(pr.get("symbol") or pr.get("name") or pid), _count(p.get("tick_8dec")),
+                            _count(p.get("lot_18dec")),
                             p.get("liquidation_fee_bps") if isinstance(p.get("liquidation_fee_bps"), int) else None,
-                            p.get("maintenance_margin_bps") if isinstance(p.get("maintenance_margin_bps"), int) else None)
+                            p.get("maintenance_margin_bps") if isinstance(p.get("maintenance_margin_bps"), int) else None,
+                            _count(pr.get("min_size_18dec")), min_notional)
     return out
 
 

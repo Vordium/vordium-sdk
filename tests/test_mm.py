@@ -246,7 +246,7 @@ def test_client_signs_what_it_sends_and_signatures_are_65_bytes():
     path, body = rec.sent[-1]
     assert path == "/order/cancel-all" and _recover(mm.cancel_all_struct_hash(OWNER, 4, body["nonce"]),
                                                      body["signature"]) == OWNER
-    c.modify(9, 10**11, 10**16)
+    c.modify(9, 10**11, 10**16, pair_id=1, side="buy")
     path, body = rec.sent[-1]
     assert path == "/order/modify" and _recover(
         mm.modify_v2_struct_hash(OWNER, 9, 10**11, 10**16, body["clientNonce"]), body["signature"]) == OWNER

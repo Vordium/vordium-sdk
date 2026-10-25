@@ -17,8 +17,12 @@ import pytest
 import requests
 from eth_account import Account
 
-from vordium import dex
+from vordium import dex, node_domain, units
 from vordium import network as net
+
+# The unit tests' fixture answers every node read offline; this test talks to a real test chain, so it keeps the real
+# readers (taken at import, before the fixture replaces them) and hands them to the client.
+REAL_IDENTITY, REAL_FETCH_SPECS = node_domain.node_identity, units.fetch_specs
 
 LIVE_CHAIN_ID = 101101
 ENV = ("VORDIUM_TESTNET_RPC", "VORDIUM_TESTNET_SPEC", "VORDIUM_TESTNET_OWNER_KEY", "VORDIUM_TESTNET_SESSION_KEY")
@@ -68,7 +72,7 @@ def test_a_signed_limit_bid_rests_on_the_book_and_cancels():
     mark = float(requests.get(f"{rpc}/oracle/{pid}", timeout=10).json()["mark_price"]) / 10 ** dex.ORACLE_DECIMALS
     price = round(mark * 0.8, 6)                       # far below the mark: the bid rests, never fills
     size = round(15 / price, 6)
-    vx = dex.Vordex(rpc_url=rpc)
+    vx = dex.Vordex(rpc_url=rpc, identity=lambda: REAL_IDENTITY(rpc), specs=REAL_FETCH_SPECS(rpc))
     nonce = int(time.time() * 1000)
     ans = vx.place_order(skey, owner, pid, dex.BUY, size, price, order_type=dex.LIMIT, client_nonce=nonce)
     assert ans.get("status_code") in (200, 202) and ans.get("success") is not False, ans
@@ -80,7 +84,8 @@ def test_a_signed_limit_bid_rests_on_the_book_and_cancels():
         time.sleep(1)
     assert resting, "the order was accepted but never rested"
     assert resting[0].get("order_type") == "Limit", f"rested as {resting[0].get('order_type')!r}, not a limit order"
-    assert int(resting[0]["price_8dec"]) == dex.limit_price_8dec(price), "rested at a price other than the signed one"
+    signed = units.price_8dec(price, vx.pair_spec(pid), "buy")          # on the market's tick, a bid rounds down
+    assert int(resting[0]["price_8dec"]) == signed, "rested at a price other than the signed one"
     # The committed order list is the truth for "rested"; the order book read is a separate view (on the test chain it
     # did not list committed orders — reported), so it is not what this test checks.
     oid = int(resting[0].get("order_id", resting[0].get("id")))

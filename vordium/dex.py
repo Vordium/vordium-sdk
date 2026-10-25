@@ -25,6 +25,13 @@ UNITS -- there are TWO different scales, do not mix them:
 
     Use :func:`to_price_8dec` for anything you sign, and :meth:`Vordex.mark_price`
     to read a human price -- never feed a raw /oracle value into an order.
+
+TICK AND LOT -- each market has a price step (tick) and a size step (lot), read
+from ``GET /markets/specs``. An order off them is not applied, so every order
+is put on them before it is signed (:mod:`vordium.units`): a bid price rounds
+down and an ask price up (never a worse price than asked), a size rounds down
+(never more than asked). Numbers are read exactly from their decimal form; a
+float is never multiplied.
 """
 
 from __future__ import annotations
@@ -39,6 +46,8 @@ from eth_utils import keccak
 
 from .caps import place_order_digest, cancel_order_digest, place_order_struct_hash, cancel_order_struct_hash
 from .node_domain import NodeDomain
+from . import units
+from .units import OrderValueError, SpecsUnavailable
 
 #: ``orderType`` values as SIGNED (the uint8 in the PlaceOrder digest). The signed format keeps four values; the chain
 #: accepts Market and Limit. Stop orders (2, 3) are not available: every write path refuses them before signing.
@@ -66,16 +75,27 @@ SIZE_DECIMALS = 18
 ORACLE_DECIMALS = 6
 
 
-def to_price_8dec(price: float) -> int:
-    """Convert a human price to the engine's uint64 8-dec integer."""
-    return int(round(price * 10 ** PRICE_DECIMALS))
+def _nearest(num: int, den: int) -> int:
+    q, r = divmod(num, den)
+    return q + (1 if 2 * r > den or (2 * r == den and q % 2) else 0)        # half to even, like round()
 
 
-def limit_price_8dec(price: float) -> int:
-    """A limit price as the chain keeps it: rounded to 6 decimals, as the signed 8-decimal integer."""
-    if not isinstance(price, (int, float)) or isinstance(price, bool) or not price > 0:
+def to_price_8dec(price: Any) -> int:
+    """Convert a human price to the engine's uint64 8-dec integer: exact from its decimal form, to the nearest unit.
+    It does not apply a market's tick; orders use :func:`vordium.units.price_8dec`."""
+    return _nearest(*units.scaled(price, PRICE_DECIMALS, "a price"))
+
+
+def limit_price_8dec(price: Any) -> int:
+    """A limit price at the 6 decimals the chain keeps, as the signed 8-decimal integer (exact, to the nearest unit).
+    It does not apply a market's tick; :meth:`Vordex.place_order` uses :func:`vordium.units.price_8dec`."""
+    try:
+        positive = units.decimal_of(price, "a limit price") > 0
+    except OrderValueError:
+        positive = False
+    if not positive:
         raise ValueError(f"a limit price must be a positive number; got {price!r}")
-    return int(round(price * 10 ** 6)) * PRICE_STEP_8DEC
+    return _nearest(*units.scaled(price, 6, "a limit price")) * PRICE_STEP_8DEC
 
 
 def _decimal(v8: int) -> float:
@@ -86,9 +106,10 @@ def _decimal(v8: int) -> float:
     return float(Decimal(v8) / Decimal(10 ** 8))
 
 
-def to_size_18dec(size: float) -> int:
-    """Convert a human size to the engine's uint128 18-dec integer."""
-    return int(round(size * 10 ** SIZE_DECIMALS))
+def to_size_18dec(size: Any) -> int:
+    """Convert a human size to the engine's uint128 18-dec integer: exact from its decimal form, to the nearest unit.
+    It does not apply a market's lot; orders use :func:`vordium.units.size_18dec` (down onto the lot)."""
+    return _nearest(*units.scaled(size, SIZE_DECIMALS, "a size"))
 
 
 def _sign_digest(private_key: str, digest: bytes) -> str:
@@ -179,11 +200,13 @@ def set_tpsl_body(owner: str, session_address: str, pair_id: int, position_id: i
 class Vordex:
     """Client for the Vordex perpetual CLOB."""
 
-    def __init__(self, rpc_url: str = None, timeout: int = 15, network=None, identity=None):
+    def __init__(self, rpc_url: str = None, timeout: int = 15, network=None, identity=None, specs: Any = None):
         # rpc_url resolves at client init from the live network's REST base (never a baked default); pass one
         # explicitly to point at a custom node.
         self.rpc_url = (rpc_url or api_base(get_network())).rstrip("/")
         self.timeout = timeout
+        # the market rules (tick, lot, minimums): read from this node for each order unless a read is given here
+        self.specs = specs
         # writes are signed under the domain of THIS node (its /status), checked against the configured network
         self.domain = NodeDomain(self.rpc_url, network, None, identity)
 
@@ -218,15 +241,21 @@ class Vordex:
         """Human mark price for ``pair_id`` (handles the 1e6 read scaling)."""
         return self.oracle(pair_id)["mark_price"] / 10 ** ORACLE_DECIMALS
 
-    def slippage_cap_8dec(self, pair_id: int, side: int, slippage_bps: int = 50) -> int:
-        """Slippage CAP for a MARKET order, as the signed 8-dec integer.
+    def pair_spec(self, pair_id: int):
+        """The market's tick, lot and minimums (:class:`vordium.mm.PairSpec`), read now unless ``specs`` was given."""
+        return units.resolve(getattr(self, "specs", None), self.rpc_url, pair_id, self.timeout)
 
-        A market order signs a price bound, not a limit: BUY caps above the
-        mark, SELL caps below it.
+    def slippage_cap_8dec(self, pair_id: int, side: int, slippage_bps: int = 50) -> int:
+        """Slippage CAP for a MARKET order, as the 8-dec integer (exact: the 6-decimal mark × the bps factor, rounded
+        away from the mark).
+
+        BUY caps above the mark, SELL caps below it.
         """
-        mark = self.mark_price(pair_id)
-        factor = 1 + slippage_bps / 10_000 if side == BUY else 1 - slippage_bps / 10_000
-        return to_price_8dec(mark * factor)
+        mark8 = units.whole(self.oracle(pair_id)["mark_price"], "mark_price") * 10 ** (PRICE_DECIMALS - ORACLE_DECIMALS)
+        bps = int(slippage_bps)
+        if side == BUY:
+            return -(-mark8 * (10_000 + bps) // 10_000)
+        return mark8 * (10_000 - bps) // 10_000
 
     def funding(self, pair_id: int) -> Dict[str, Any]:
         """Current funding rate and open interest for ``pair_id``."""
@@ -254,9 +283,9 @@ class Vordex:
         owner: str,
         pair_id: int,
         side: int,
-        size: float,
-        price: float,
-        leverage: float = 1.0,
+        size: Any,
+        price: Any,
+        leverage: Any = 1.0,
         order_type: int = LIMIT,
         reduce_only: bool = False,
         post_only: bool = False,
@@ -268,8 +297,15 @@ class Vordex:
         """Sign and submit an order.
 
         ``session_key`` is the session private key (the chain recovers ``owner``
-        from it). A LIMIT price is rounded to 6 decimals (the precision the chain
-        keeps); a MARKET order carries no price and ``price`` is ignored.
+        from it). ``size``, ``price`` and ``leverage`` may be int, str, Decimal
+        or float, and are read exactly from their decimal form. The order is put
+        on the market's tick and lot first (read from ``GET /markets/specs``
+        unless the client holds ``specs``): a buy's limit price rounds down and a
+        sell's up, at most 6 decimals; the size rounds down onto the lot. A size
+        that rounds to 0, below the market's smallest size, or a limit order
+        below the network's smallest order value raises :class:`OrderValueError`
+        before anything is signed. A MARKET order carries no price and ``price``
+        is ignored.
 
         A duplicate ``client_nonce`` is retried with a fresh one, matching the
         web app's behaviour. ``order_type`` is MARKET or LIMIT; stop orders are
@@ -281,10 +317,12 @@ class Vordex:
         _wire(SIDE_NAMES, side, "side")
         _wire(ORDER_TYPE_NAMES, order_type, "order_type")
         refuse_unavailable(order_type, trigger_price, trigger_dir)
-        size18 = to_size_18dec(size)
-        price8 = limit_price_8dec(price) if order_type in PRICED else 0
-        trigger8 = to_price_8dec(trigger_price) if trigger_price else 0
-        leverage_bps = int(round(leverage * 10_000))
+        spec = self.pair_spec(pair_id)
+        size18 = units.size_18dec(size, spec)
+        price8 = units.price_8dec(price, spec, side) if order_type in PRICED else 0
+        units.check_notional(size18, price8, spec)
+        trigger8 = 0                                    # stop orders are refused above: no trigger is ever signed
+        leverage_bps = units.leverage_bps(leverage)
 
         last: Dict[str, Any] = {}
         for _ in range(max(1, retries)):

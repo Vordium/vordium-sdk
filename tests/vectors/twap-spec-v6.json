@@ -1,0 +1,73 @@
+{
+ "twap": {
+  "liveToday": true,
+  "place": {
+   "method": "POST",
+   "path": "/twap/place",
+   "typeString": "PlaceTwap(address owner,uint32 pairId,uint8 side,uint128 totalSize18dec,uint32 numSlices,uint64 durationMs,uint32 leverageBps,uint32 slippageBps,bool randomize,uint64 triggerPrice8dec,uint8 triggerDir,uint64 minPrice8dec,uint64 maxPrice8dec,uint64 clientNonce)",
+   "body": [
+    {
+     "name": "owner"
+    },
+    {
+     "name": "pair_id"
+    },
+    {
+     "name": "side"
+    },
+    {
+     "name": "total_size_18dec"
+    },
+    {
+     "name": "num_slices"
+    },
+    {
+     "name": "duration_ms"
+    },
+    {
+     "name": "leverage_bps"
+    },
+    {
+     "name": "slippage_bps"
+    },
+    {
+     "name": "randomize"
+    },
+    {
+     "name": "trigger_price_8dec"
+    },
+    {
+     "name": "trigger_dir"
+    },
+    {
+     "name": "min_price_8dec"
+    },
+    {
+     "name": "max_price_8dec"
+    },
+    {
+     "name": "client_nonce"
+    },
+    {
+     "name": "signature"
+    }
+   ]
+  },
+  "cancel": {
+   "method": "POST",
+   "path": "/twap/cancel",
+   "typeString": "CancelTwap(address owner,uint64 twapId,uint64 clientNonce)"
+  },
+  "durationMs": {
+   "min": 300000,
+   "max": 604800000
+  },
+  "subOrders": {
+   "minIntervalMs": 30000,
+   "maxNumSlices": 20160,
+   "maxSlippageBpsPerSubOrder": 300,
+   "minSubOrderNotional6dec": 10000000,
+   "minTotalNotional6dec": 100000000
+  }
+ }
+}

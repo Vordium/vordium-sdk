@@ -8,7 +8,7 @@ fixture."""
 
 import pytest
 
-from vordium import bridge_v4, mm, node_domain
+from vordium import bridge_v4, mm, node_domain, units
 from vordium import network as net
 
 
@@ -58,8 +58,10 @@ def _pin_network():
 @pytest.fixture(autouse=True)
 def _offline_node(monkeypatch):
     """Unit tests read no node: a client's node identity is the pinned live network's (a test that needs another
-    node passes ``identity=``), and every test starts with fresh per-account nonce clocks."""
+    node passes ``identity=``), its market rules read as no tick, lot or minimum (a test that needs rules passes
+    ``specs=`` or patches ``units.fetch_specs``), and every test starts with fresh per-account nonce clocks."""
     net_ = make_live_network()
+    monkeypatch.setattr(units, "fetch_specs", lambda base_url, timeout=10.0, get=None: units.NO_RULES)
     monkeypatch.setattr(node_domain, "node_identity",
                         lambda rpc_url, timeout=6.0, get_json=None: node_domain.NodeIdentity(net_.chain_id, net_.genesis_sha256))
     mm._CLOCKS.clear()

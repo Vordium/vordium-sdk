@@ -23,7 +23,8 @@ agent's own nonce); ``ClearAgentLock`` by the owner only. :mod:`vordium.policy` 
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Tuple
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
 
 from .eip712 import sign_agent_op
 from .names import require_name
@@ -185,3 +186,59 @@ def sign_agent_policy(agent_private_key: str, value: Dict[str, Any]) -> Dict[str
     """Sign a ``SetAgentPolicyV1`` value built by :func:`set_policy` with ``signer="agent"`` using the AGENT's key, and
     return the ``/submit`` body. Only this op may be agent-signed; the chain refuses the agent's key on every other."""
     return submit_body("SetAgentPolicyV1", value, sign_agent_op(agent_private_key, "SetAgentPolicyV1", value))
+
+
+# -- refusals ---------------------------------------------------------------------------------------------------------
+# The chain refuses an agent's action after receipt (the intake answers 202) and records why in
+# GET /events/agent/{agent} (kind agent_refused, field reason). The network spec publishes each reason's meaning under
+# agents.refusalCodes.reasons; a node that checks agent orders at intake answers 403 with code agent_refused, the reason
+# and its meaning (read by vordium.mm.read_answer).
+
+
+def refusal_meanings(spec: Any) -> Dict[str, str]:
+    """``{reason key: plain meaning}`` from a network spec's ``agents.refusalCodes.reasons``; ``{}`` when the network
+    publishes none (a reason is then reported as the chain wrote it)."""
+    agents = spec.get("agents") if isinstance(spec, dict) else None
+    rc = agents.get("refusalCodes") if isinstance(agents, dict) else None
+    out: Dict[str, str] = {}
+    for r in (rc.get("reasons") if isinstance(rc, dict) else None) or []:
+        if isinstance(r, dict) and isinstance(r.get("key"), str) and isinstance(r.get("meaning"), str):
+            out[r["key"]] = r["meaning"]
+    return out
+
+
+@dataclass(frozen=True)
+class AgentRefusal:
+    """One action the chain refused for an agent: the reason key, its meaning when the network publishes it."""
+    reason: str
+    meaning: Optional[str]
+    client_nonce: Optional[int]
+    op_kind: Optional[str]
+    height: Optional[int]
+    at_ms: Optional[int]
+
+
+def read_agent_refusals(j: Any, meanings: Optional[Dict[str, str]] = None) -> List[AgentRefusal]:
+    """The ``agent_refused`` records of a ``GET /events/agent/{agent}`` read (newest first, as the node lists them)."""
+    events = j.get("events") if isinstance(j, dict) else None
+    out: List[AgentRefusal] = []
+    for e in events or []:
+        if not isinstance(e, dict) or e.get("kind") != "agent_refused":
+            continue
+        reason = str(e.get("reason") or "")
+        n = lambda k: e.get(k) if isinstance(e.get(k), int) and not isinstance(e.get(k), bool) else None  # noqa: E731
+        out.append(AgentRefusal(reason, (meanings or {}).get(reason), n("client_nonce"),
+                                e.get("op_kind") if isinstance(e.get("op_kind"), str) else None, n("height"), n("at_ms")))
+    return out
+
+
+def agent_refusals(agent: str, rest: Optional[str] = None, spec: Any = None, limit: int = 50,
+                   timeout: float = 10.0) -> List[AgentRefusal]:
+    """What the chain refused for ``agent``, with each reason's published meaning. ``rest`` defaults to the configured
+    network's REST base and ``spec`` to its network spec."""
+    from . import network as _net
+    base = (rest or _net.api_base(_net.get_network())).rstrip("/")
+    if spec is None:
+        spec = _net._fetch_spec(_net.default_spec_url(), timeout) or {}
+    j = _net._http_json(f"{base}/events/agent/{agent.lower()}?limit={int(limit)}", timeout)
+    return read_agent_refusals(j, refusal_meanings(spec))
