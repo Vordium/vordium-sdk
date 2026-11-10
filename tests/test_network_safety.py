@@ -1,5 +1,7 @@
 """Network safety, one nonce clock per account, tick/lot rounding and the market maker's account reads."""
 
+import time
+
 import pytest
 from eth_account import Account
 from eth_utils import keccak
@@ -64,14 +66,27 @@ def test_a_live_node_never_signs_for_the_test_network():
     assert rec.sent == []
 
 
-def test_unconfigured_the_client_signs_for_the_node_it_posts_to(monkeypatch):
+def test_unconfigured_a_node_of_your_own_is_never_signed_for(monkeypatch):
     monkeypatch.delenv("VORDIUM_CHAIN_ID", raising=False)
     monkeypatch.delenv("VORDIUM_GENESIS_SHA256", raising=False)
+    monkeypatch.delenv("VORDIUM_NETWORK", raising=False)
     rec = _Rec()
     c = _client(TEST, rec=rec, unconfigured=True)
+    with pytest.raises(net.UnpinnedNetwork):
+        c.cancel_all(3)
+    assert rec.sent == []
+
+
+def test_unconfigured_a_node_that_names_its_network_signs_under_that_pin(monkeypatch):
+    monkeypatch.delenv("VORDIUM_CHAIN_ID", raising=False)
+    monkeypatch.delenv("VORDIUM_GENESIS_SHA256", raising=False)
+    monkeypatch.delenv("VORDIUM_NETWORK", raising=False)
+    pinned = NodeIdentity(net.PINS["testnet"].chain_id, net.PINS["testnet"].genesis_sha256)
+    rec = _Rec()
+    c = _client(pinned, network="testnet", rec=rec, unconfigured=True)
     c.cancel_all(3)
     _, body = rec.sent[-1]
-    d = keccak(b"\x19\x01" + _sep(TEST) + mm.cancel_all_struct_hash(OWNER, 3, body["nonce"]))
+    d = keccak(b"\x19\x01" + _sep(pinned) + mm.cancel_all_struct_hash(OWNER, 3, body["nonce"]))
     assert Account._recover_hash(d, signature=bytes.fromhex(body["signature"][2:])) == OWNER
 
 
@@ -182,9 +197,10 @@ def test_single_orders_take_the_same_clock(monkeypatch):
             return {}
     monkeypatch.setattr(_http_mod, "post", lambda url, json=None, timeout=None, **k: (sent.append(json), R())[1])
     session = Account.create()
-    mm.nonce_clock(OWNER).seen(9_999_999_999_000)
+    held = int(time.time() * 1000) + 3_600_000          # a nonce the chain holds, an hour ahead of this clock
+    mm.nonce_clock(OWNER).seen(held)
     dex.Vordex(rpc_url="http://rpc.invalid").place_order(session.key.hex(), OWNER, 1, dex.BUY, 1, 100)
-    assert sent[-1]["clientNonce"] == 9_999_999_999_001
+    assert sent[-1]["clientNonce"] == held + 1
 
 
 def test_single_orders_and_the_operator_refuse_another_network(monkeypatch):

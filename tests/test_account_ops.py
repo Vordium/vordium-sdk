@@ -118,11 +118,15 @@ class _Stub(A.AccountOps):
     """A client whose node is a script: posts are recorded and answered; reads come from a list."""
     def __init__(self, post_answer, reads):
         self.rest, self.key, self.timeout, self.ident = "http://node.invalid", VEC_KEY, 1.0, _Ident()
+        import dataclasses
+        from conftest import make_live_network
+        # the configured network is the node's (chain 101102 and the vectors' genesis), given as an explicit pin
+        self.net = dataclasses.replace(make_live_network(), chain_id=_Ident.chain_id, genesis_sha256=_Ident.genesis_sha256)
         from eth_account import Account
         self.owner = Account.from_key(VEC_KEY).address
         self.posts, self.post_answer, self.reads = [], post_answer, list(reads)
 
-    def _post(self, path, body):
+    def _post(self, path, body, dedup=True):
         self.posts.append((path, body))
         return self.post_answer
 

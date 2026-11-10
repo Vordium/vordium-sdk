@@ -11,6 +11,7 @@ from __future__ import annotations
 from eth_account import Account
 from eth_account.messages import encode_defunct
 
+from .network import require_message_pin
 from .rollb import SigningPhase, with_genesis_line
 
 
@@ -47,8 +48,12 @@ def claim_earnings_message(chain_id: int, referrer: str, nonce: int, phase: Sign
     ], phase))
 
 
-def sign_referral_message(private_key: str, message: str) -> str:
-    """``personal_sign`` the message and return the 64-byte ``r||s`` 0x-hex the referral routes take."""
+def sign_referral_message(private_key: str, message: str, network=None) -> str:
+    """``personal_sign`` the message and return the 64-byte ``r||s`` 0x-hex the referral routes take.
+
+    The message's ``Chain:`` (and ``Genesis:``, from H) must equal the pin of ``network`` (default: the configured
+    network), else :class:`vordium.network.PinMismatch` is raised and nothing is signed."""
+    require_message_pin(message, network)
     sig = Account.sign_message(encode_defunct(text=message), private_key=private_key).signature.hex()
     sig = sig[2:] if sig.startswith("0x") else sig
     return "0x" + sig[:128]

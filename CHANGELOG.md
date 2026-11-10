@@ -1,5 +1,75 @@
 # Changelog
 
+## 1.4.10
+- Each named network carries its pin in the SDK: `mainnet` chain 101101, genesis
+  `2c1c0679fa6ab8358f1d3e8d294a8d1c73ac2e2caf9079f1216abedc3d9fdf4f`; `testnet` chain 101102, genesis
+  `8b5d414c5cd5d18bc468b64f87ac8e2c2b5ff494c769d5e09dcf50ce75a59792` (`vordium.PINS`, `vordium.Pin`).
+- Every signature (orders, cancels, sessions, agent operations, TWAP, margin mode, the dead-man switch, withdrawals,
+  money and referral messages, VORD transfers) is made under the pin. Before signing, the SDK compares the pin with
+  `eth_chainId`, the network spec and the node's `/status`; when any differs it raises `PinMismatch` with the network,
+  the expected and the reported values, and nothing is signed. Reads still work and issue a `PinWarning`.
+- The EIP-712 salt is derived from the pinned genesis.
+- An address of your own (`rpc_url=`, `VORDIUM_RPC_URL`) must name its network (`network="mainnet"` or `"testnet"`) or
+  carry an explicit pin (`pin=Pin(chain_id, genesis_sha256)`, or both `VORDIUM_CHAIN_ID` and `VORDIUM_GENESIS_SHA256`).
+  Without one it can be read, but nothing is signed for it (`UnpinnedNetwork`). Clients posting to a node accept
+  `network="mainnet"`, `"testnet"` or a `Pin`. A named network's own address counts as naming it. `VORDIUM_CHAIN_ID`
+  alone is not a pin: with an address of your own, set `VORDIUM_GENESIS_SHA256` too, or nothing is signed.
+- A new genesis for a named network takes a new SDK release with the new pin.
+- New `signing_pin()`, `PinMismatch`, `UnpinnedNetwork`, `PinWarning`.
+- One nonce allocator per account and nonce space (`vordium.nonces.NonceAllocator`; `nonce_clock(owner)` returns the
+  account's one in the `orders` space). Nonces are `max(last + 1, now in ms)`: strictly rising across threads and
+  processes on one machine (a file lock around a mark kept in `VORDIUM_STATE_DIR`, else `~/.vordium/nonces`; folder
+  0700, files 0600), never back when the clock goes back, and never reused after a restart. Orders, batches,
+  cancel-all, modify, the dead-man switch and TWAP orders share the `orders` space; session keys and margin mode use
+  the `account` space.
+- Before a nonce is used it is checked against the window the network accepts (a client nonce within 2 days before
+  and 1 day after block time; other nonces at most 1 day ahead): against the network's block time when the client can
+  read it (`ChainClock`: one short read at most every 5 minutes, never holding up other writes), else against this
+  computer's clock (no network set, `chain_clock=None`, or a network whose block time cannot be read). Outside it,
+  `ClockOutOfWindow` says how far the clock is off and nothing is signed.
+- A stored mark left far ahead of the clock (outside the window) does not stop orders: client nonces continue from
+  the clock, with a `NonceStateWarning` (the network refuses a nonce it already holds). For session, agent and margin
+  nonces, which must rise, the error names the mark's file and when it is safe to delete it.
+- A write is signed once and never signed again with a new nonce. For a write the network applies once per nonce (an
+  order, a TWAP order, a session key, a cancel), a timeout, a lost connection or HTTP 429/502/503/504 sends the same
+  signed body again (up to 3 copies). A write it does not deduplicate (cancel-all, a batch, a modify, a take-profit /
+  stop-loss, margin mode) is sent again only when the first copy never left this machine; otherwise the answer says it
+  is unknown whether it arrived (`MarketMaker`: `Submitted(ok=False, unknown=True)`; `Operator`: `status: "unknown"`)
+  and nothing is sent twice.
+- When a copy may have reached the network (its answer was lost, or a gateway answered 502/503/504) and the final
+  answer is not a 2xx (a refusal such as insufficient margin, the nonce code, a 5xx), that answer is never reported as
+  a refusal: the write is read back, else it is unknown. A 5xx on a write the network does not deduplicate is always
+  unknown, and `MarketMaker` reads any 5xx without a code as `delivery_unknown`, never as refused.
+- After a stored mark is set back to the clock, a client nonce may repeat one handed out before; an order found with
+  it then counts as this write's only when the network's record is newer than the set-back (the set-back's time is the
+  network's block time when it is known, else this computer's clock).
+- A cancel whose earlier copy may have arrived is read back from the account's resting orders and records: gone with
+  a cancel record answers `status: "done"`; gone with a fill record answers `status: "filled"` (the order filled
+  before the cancel: check the position); gone with no record, still resting, or unreadable answers `status:
+  "unknown"`. Never a plain refusal (`Vordex.cancel_order`, `Operator.cancel_order`).
+- A write that could not reach the network on any try (the connection could not be made) is reported as not sent:
+  `DeliveryUnknown.never_sent`, `AccountOps` `applied=False` ("nothing was sent"), `MarketMaker` refusal `not_sent`,
+  `status: "not_sent"` for cancels and `Operator`.
+- `AccountOps` results say `applied=None` when the write may have been received (submitted, or its answer was lost) and
+  the chain's read has not shown it within the wait; `applied=False` only when the network refused it. A TWAP also
+  counts as placed when the account's TWAP records show it ended.
+- A refused or unreachable connection counts as "never sent" only when it happened while the connection was being
+  made (urllib3's NewConnectionError, a name lookup failure, a connect timeout); otherwise the copy may have arrived.
+- The network answers a used nonce, a nonce outside the window and a nonce used by another signer with one code, so
+  that answer alone never counts as success. After a resent copy is answered with it, `Vordex.place_order` reads the
+  order back by its client nonce and compares the signed market, side and size (its original size when the
+  record shows one) or limit price: a match answers
+  `status: "received"`, `already_received: True` with `found`; anything else answers `status: "unknown"`,
+  `delivery_unknown: True` (read the account's orders before sending a new one). Neither carries an HTTP status. When
+  no copy is answered, `DeliveryUnknown` is raised unless the read-back finds the order. A nonce answer to the first
+  copy is a refusal.
+- `Vordex.place_order` answers carry `clientNonce` and `attempts`; `Vordex.order_by_client_nonce(owner, n, signed)`
+  reads an order back by its client nonce and, with `signed`, only an order that carries those values. A TWAP counts
+  as placed only when the chain lists its client nonce with the signed market, side and size. `Operator.place_order`
+  takes its client nonce from the account's allocator when none is given.
+- New `vordium.nonces` (`NonceAllocator`, `ChainClock`, `ClockOutOfWindow`, `DeliveryUnknown`, `send_same`), and
+  `vordium.dex.matches_signed`.
+
 ## 1.4.9
 - No private key is ever printed. `Agent()` with no key makes a new key held only in memory and exposes its address
   (save it with `agent.save(path)`); `vordium init` writes the new key to a key file (`--out PATH`, default

@@ -81,6 +81,7 @@ def test_agent_send_never_echoes_the_key(home, capsys):
 
     class Eth:
         gas_price = 1
+        chain_id = 101101                      # the node's eth_chainId, equal to the configured network's pin
 
         def get_transaction_count(self, _):
             return 0

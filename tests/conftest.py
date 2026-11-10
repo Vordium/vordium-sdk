@@ -67,3 +67,15 @@ def _offline_node(monkeypatch):
     mm._CLOCKS.clear()
     yield
     mm._CLOCKS.clear()
+
+
+@pytest.fixture(autouse=True)
+def _nonce_state(monkeypatch, tmp_path):
+    """Every test keeps its nonce marks in its own directory and reads no block time (a test that needs one passes
+    ``chain_clock=``)."""
+    from vordium import nonces
+    monkeypatch.setenv(nonces.STATE_ENV, str(tmp_path / "nonce-state"))
+    monkeypatch.setattr(nonces, "chain_clock_for", lambda rest_url, network=None: None)
+    nonces._ALLOCATORS.clear()
+    yield
+    nonces._ALLOCATORS.clear()

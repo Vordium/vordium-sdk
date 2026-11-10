@@ -19,6 +19,8 @@ Pass the phase from :func:`vordium.rollb.read_signing_phase`, read just before s
 
 from __future__ import annotations
 
+from .network import require_message_pin
+
 import re
 from typing import Any, Dict, List, Tuple
 
@@ -109,8 +111,12 @@ def money_body(op: str, args: Dict[str, Any], signature: str) -> Dict[str, Any]:
 
 
 def sign_money_op(private_key: str, op: str, args: Dict[str, Any], chain_id: int, phase: SigningPhase,
-                  by: str = "owner") -> Dict[str, Any]:
+                  by: str = "owner", network=None) -> Dict[str, Any]:
     """Sign one money op (65-byte ``r||s||v`` over the EIP-191 message) and return the POST body.
+
+    The message's chain id (and genesis, from H) must equal the pin of ``network`` (default: the configured network;
+    see :func:`vordium.network.signing_pin`), else :class:`vordium.network.PinMismatch` is raised and nothing is
+    signed.
 
     ``by`` says whose key ``private_key`` is: ``"owner"``, or ``"session"`` -- allowed only for
     ``ClaimStakingRewards``; the chain refuses a session key on the other four. The SDK checks only the rule, not that
@@ -120,6 +126,7 @@ def sign_money_op(private_key: str, op: str, args: Dict[str, Any], chain_id: int
     if by == "session" and MONEY_SIGNER.get(op) != "owner-or-session":
         raise MoneyOpError("this operation must be signed with the owner's key; a session key may not move funds")
     msg = money_message(op, args, chain_id, phase)
+    require_message_pin(msg, network)
     sig = Account.sign_message(encode_defunct(text=msg), private_key=private_key).signature.hex()
     return money_body(op, args, "0x" + sig.removeprefix("0x"))
 

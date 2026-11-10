@@ -41,14 +41,13 @@ AGENT_CAPS_PRECOMPILE_ADDR = "0x000000000000000000000000000000000000080B"
 # directly (v dropped -> 64-byte r||s). These constants MUST match the chain
 # byte-for-byte.
 # chainId + verifyingContract are RESOLVED AT RUNTIME (vordium.network). There is
-# deliberately NO chainId constant in this module: a copied chainId can go
-# stale, and a stale one makes every signed op fail. Name/version are protocol
-# constants shared from the network module.
+# No chainId constant in this module: the domain is built from the configured network's pin (vordium.pins), checked
+# against what the network reports. Name/version are protocol constants shared from the network module.
 from .network import (
     EIP712_DOMAIN_NAME,
-    NetworkResolutionError,
     EIP712_DOMAIN_VERSION,
     get_network,
+    signing_pin,
 )
 
 _EIP712_DOMAIN_TYPEHASH = keccak(
@@ -234,20 +233,14 @@ def vordcore_domain_separator(chain_id: int, verifying_contract: str, genesis_sh
 
 
 def domain_separator() -> bytes:
-    """EIP-712 domainSeparator for the VordCore domain (genesis-bound salt).
+    """EIP-712 domainSeparator for the VordCore domain (genesis-bound salt) of the configured network.
 
-    chainId + verifyingContract + genesis_sha256 are RUNTIME-resolved from :mod:`vordium.network`
-    (the node's /status), so it tracks the chain the node serves with no code change — one source of truth. If the
-    genesis is unknown the SDK REFUSES to sign rather than emit a domain the chain would reject."""
+    chainId and the genesis come from the network's PIN (:mod:`vordium.pins`), after the values the network reports
+    (eth_chainId, the spec, the node's /status) were checked against it. When they differ, or the network has no pin,
+    :func:`vordium.network.signing_pin` raises and nothing is signed."""
     net = get_network()
-    if not getattr(net, "genesis_sha256", None):
-        raise NetworkResolutionError(
-            "genesis_sha256 unavailable from the node's /status — cannot build the genesis-bound "
-            "VordCore EIP-712 domain. The chain rejects a saltless/4-field domain, so the SDK "
-            "refuses to sign rather than produce a rejected signature. Point at a node whose /status "
-            "exposes genesis_sha256."
-        )
-    return vordcore_domain_separator(net.chain_id, net.verifying_contract, net.genesis_sha256)
+    pin = signing_pin(net)
+    return vordcore_domain_separator(pin.chain_id, net.verifying_contract, pin.genesis_sha256)
 
 
 def _eip712_digest(struct_hash: bytes) -> bytes:

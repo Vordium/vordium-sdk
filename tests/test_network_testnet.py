@@ -12,7 +12,7 @@ from vordium import rollb
 TESTNET_RPC = "https://rpc-testnet.vordium.com"
 TESTNET_API = "https://testnet.vordex.xyz/chain"
 TESTNET_SPEC = "https://testnet.vordex.xyz/network-spec.json"
-GENESIS = "3263e89e7cd024467a58c352a4d4446f30020093ed979d6e318196c7007d2482"
+GENESIS = "8b5d414c5cd5d18bc468b64f87ac8e2c2b5ff494c769d5e09dcf50ce75a59792"   # the test network's pin
 OTHER = "2c1c0679fa6ab8358f1d3e8d294a8d1c73ac2e2caf9079f1216abedc3d9fdf4f"
 
 

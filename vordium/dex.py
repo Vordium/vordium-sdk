@@ -197,10 +197,100 @@ def set_tpsl_body(owner: str, session_address: str, pair_id: int, position_id: i
             "session_key": session_address, "signature": signature}
 
 
+def cancel_outcome(records: Any, order_id: int) -> Optional[str]:
+    """How an order that no longer rests was closed, from the account's records: ``"cancelled"``, ``"filled"``, or
+    None when no record says."""
+    mine = [e for e in (records or []) if isinstance(e, dict)
+            and str(e.get("order_id", e.get("orderId", e.get("id")))) == str(order_id)]
+    kinds = [(str(e.get("kind") or "").lower(), str(e.get("status") or "").lower()) for e in mine]
+    if any(k == "order_cancelled" or (k == "order_closed" and st == "cancelled") for k, st in kinds):
+        return "cancelled"
+    if any(k in ("fill", "order_filled") or (k == "order_closed" and st == "filled") for k, st in kinds):
+        return "filled"
+    return None
+
+
+def cancel_read_back(read_orders: Any, order_id: int, answer: Any = None, attempts: int = 0,
+                     read_records: Any = None) -> Dict[str, Any]:
+    """After a cancel whose earlier copy may have arrived (its answer was lost, then a refusal or a 5xx): the account's
+    resting orders and records decide. Gone with a cancel record: ``status "done"`` (``already_received``). Gone with a
+    fill record: ``status "filled"`` (the order filled before the cancel). Gone with no record, still resting, or
+    unreadable: ``status "unknown"``. Never a plain refusal."""
+    rows = None
+    try:
+        rows = read_orders()
+    except Exception:
+        rows = None
+    base = {"status_code": None, "attempts": attempts, "chain_answer": answer, "order_id": int(order_id)}
+    if isinstance(rows, list) and not any(isinstance(o, dict) and str(o.get("id", o.get("order_id"))) == str(order_id)
+                                          for o in rows):
+        try:
+            j = read_records() if read_records is not None else None
+        except Exception:
+            j = None
+        how = cancel_outcome(j.get("events") if isinstance(j, dict) else j, order_id)
+        if how == "cancelled":
+            return {**base, "status": "done", "already_received": True, "order_gone": True,
+                    "detail": "The order was cancelled."}
+        if how == "filled":
+            return {**base, "status": "filled", "already_received": False, "order_gone": True,
+                    "detail": "The order filled before the cancel: check your position."}
+        return {**base, "status": "unknown", "delivery_unknown": True, "already_received": False, "order_gone": True,
+                "detail": "The order no longer rests: it closed (filled or cancelled). Check the fills and the position."}
+    return {**base, "status": "unknown", "delivery_unknown": True, "already_received": False,
+            "detail": ("The order is still resting" if isinstance(rows, list) else "The orders could not be read")
+                      + " after an earlier copy of the cancel may have arrived; read the account's orders, then "
+                      "cancel again if it is still resting."}
+
+
+def _num(v: Any) -> Optional[int]:
+    if isinstance(v, bool) or v is None:
+        return None
+    if isinstance(v, int):
+        return v
+    if isinstance(v, str) and v.strip().lstrip("-").isdigit():
+        return int(v.strip())
+    return None
+
+
+def matches_signed(rec: Dict[str, Any], signed: Optional[Dict[str, Any]]) -> bool:
+    """Whether an order record carries what was signed: its market and side, and its size or limit price. The size is
+    the record's ``original_size_18dec`` when it shows one, else its ``size_18dec`` / ``size`` (which a partly filled
+    order shows as what is left: then it does not match, and the write reads as unknown, never as received). A field
+    the record does not show is not counted; a field it shows with another value is a mismatch; a record that shows
+    neither size nor price is not enough."""
+    if not signed:
+        return True
+    pair = _num(rec.get("pair_id", rec.get("pairId")))
+    if pair is None or pair != int(signed["pair_id"]):
+        return False
+    side = rec.get("side")
+    s = str(side).strip().lower() if side is not None else ""
+    side_n = 0 if s in ("0", "buy", "b", "long") else 1 if s in ("1", "sell", "s", "short") else None
+    if side_n is None or side_n != int(signed["side"]):
+        return False
+    shown = 0
+    for k in ("original_size_18dec", "size_18dec", "size"):
+        v = _num(rec.get(k))
+        if v is not None:
+            if v != int(signed["size_18dec"]):
+                return False
+            shown += 1
+            break
+    if signed.get("price_8dec") is not None:
+        v = _num(rec.get("price_8dec"))
+        if v is not None:
+            if v != int(signed["price_8dec"]):
+                return False
+            shown += 1
+    return shown > 0
+
+
 class Vordex:
     """Client for the Vordex perpetual CLOB."""
 
-    def __init__(self, rpc_url: str = None, timeout: int = 15, network=None, identity=None, specs: Any = None):
+    def __init__(self, rpc_url: str = None, timeout: int = 15, network=None, identity=None, specs: Any = None,
+                 chain_clock: Any = "auto"):
         # rpc_url resolves at client init from the live network's REST base (never a baked default); pass one
         # explicitly to point at a custom node.
         self.rpc_url = (rpc_url or api_base(get_network())).rstrip("/")
@@ -209,6 +299,9 @@ class Vordex:
         self.specs = specs
         # writes are signed under the domain of THIS node (its /status), checked against the configured network
         self.domain = NodeDomain(self.rpc_url, network, None, identity)
+        # the network's block time for the client-nonce window check (None: this computer's clock)
+        from . import nonces
+        self._chain = nonces.chain_clock_for(self.rpc_url, network) if chain_clock == "auto" else chain_clock
 
     def _digest(self, struct_hash: bytes) -> bytes:
         return keccak(b"\x19\x01" + self.domain.separator() + struct_hash)
@@ -307,12 +400,25 @@ class Vordex:
         before anything is signed. A MARKET order carries no price and ``price``
         is ignored.
 
-        A duplicate ``client_nonce`` is retried with a fresh one, matching the
-        web app's behaviour. ``order_type`` is MARKET or LIMIT; stop orders are
+        The client nonce comes from the account's one clock (:func:`vordium.mm.nonce_clock`) unless ``client_nonce`` is
+        given: strictly rising across threads, processes and restarts, and checked against the network's window first
+        (:class:`vordium.nonces.ClockOutOfWindow` when this computer's clock is too far off; nothing is signed).
+
+        The order is signed ONCE. A timeout, a lost connection or a busy gateway sends the same signed body again, up
+        to ``retries`` copies in all; it never signs a new nonce. When a resent copy is answered with the nonce code, the
+        order is read back: if the network lists an order with this client nonce AND the signed market, side and size
+        or price, the answer is ``{"status": "received", "already_received": True, "found": ...}``; otherwise it is
+        ``{"status": "unknown", "delivery_unknown": True}`` (read the account's orders before sending a new one). Neither
+        carries an HTTP status (``status_code`` is None). When no copy is answered,
+        :class:`vordium.nonces.DeliveryUnknown` is raised unless the read-back finds the order. Every answer carries
+        ``clientNonce`` and ``attempts``.
+
+        ``order_type`` is MARKET or LIMIT; stop orders are
         not available, and ``trigger_price`` / ``trigger_dir`` must stay 0
         (:class:`OrderNotAvailable` otherwise, before anything is signed).
         """
         from .mm import nonce_clock
+        from . import nonces
 
         _wire(SIDE_NAMES, side, "side")
         _wire(ORDER_TYPE_NAMES, order_type, "order_type")
@@ -324,44 +430,111 @@ class Vordex:
         trigger8 = 0                                    # stop orders are refused above: no trigger is ever signed
         leverage_bps = units.leverage_bps(leverage)
 
-        last: Dict[str, Any] = {}
-        for _ in range(max(1, retries)):
-            nonce = client_nonce if client_nonce is not None else nonce_clock(owner)()   # the account's one clock
-            # The signed value and the POST body MUST carry identical values --
-            # the engine rebuilds the digest from the body.
-            digest = self._digest(place_order_struct_hash(
-                owner, pair_id, side, size18, price8, leverage_bps,
-                order_type, reduce_only, nonce, post_only, trigger8, trigger_dir,
-            ))
-            signature = _sign_digest(session_key, digest)
-            from eth_account import Account
+        # The signed value and the POST body MUST carry identical values -- the engine rebuilds the digest from the body.
+        nonce = int(client_nonce) if client_nonce is not None else nonces.fresh(nonce_clock(owner), 0, getattr(self, "_chain", None))
+        digest = self._digest(place_order_struct_hash(
+            owner, pair_id, side, size18, price8, leverage_bps,
+            order_type, reduce_only, nonce, post_only, trigger8, trigger_dir,
+        ))
+        signature = _sign_digest(session_key, digest)
+        from eth_account import Account
 
-            body = place_order_body(
-                owner, Account.from_key(session_key).address, pair_id, side, size18, price8, leverage_bps,
-                order_type, reduce_only, post_only, trigger8, trigger_dir, nonce, signature,
-            )
-            r = _http.post(
-                f"{self.rpc_url}/order/place", json=body, timeout=self.timeout
-            )
-            last = r.json() if r.content else {}
-            duplicate = r.status_code == 409 or "duplicate" in str(
-                last.get("error", "")
-            ).lower()
-            if duplicate and client_nonce is None:
-                continue
-            last.setdefault("status_code", r.status_code)
-            return last
-        return last
+        body = place_order_body(
+            owner, Account.from_key(session_key).address, pair_id, side, size18, price8, leverage_bps,
+            order_type, reduce_only, post_only, trigger8, trigger_dir, nonce, signature,
+        )
+        signed = {"pair_id": int(pair_id), "side": int(side), "size_18dec": int(size18),
+                  "price_8dec": int(price8) if order_type in PRICED else None}
+        rewound = getattr(nonce_clock(owner), "rewound_before", lambda n: None)(nonce)
+
+        def ours(found):
+            """A read-back counts only when it matches what was signed AND, when this nonce may have been handed out
+            before the mark was set back, it is newer than that."""
+            if found is None or rewound is None:
+                return found
+            ts = next((found.get(k) for k in ("timestamp_ms", "ts_ms", "time_ms") if isinstance(found.get(k), int)), None)
+            return found if ts is not None and ts > rewound else None
+        base = {"clientNonce": nonce}
+        try:
+            sent = nonces.send_same(lambda: self._post_once("/order/place", body), attempts=retries, nonce=nonce)
+        except nonces.DeliveryUnknown as e:
+            found = ours(self.order_by_client_nonce(owner, nonce, signed))
+            if found is None:
+                raise
+            return {**base, "status": "received", "already_received": True, "found": found, "attempts": e.attempts,
+                    "status_code": None}
+        if sent.needs_read_back:
+            # an earlier copy may have arrived and the last answer is not a 2xx (the nonce code - which also means
+            # "outside the window" or "used by another signer" -, a refusal of a later copy, a 5xx): the order is ours
+            # only when the network lists it with what was signed
+            found = ours(self.order_by_client_nonce(owner, nonce, signed))
+            if found is not None:
+                return {**base, "status": "received", "already_received": True, "found": found,
+                        "attempts": sent.attempts, "status_code": None, "chain_answer": sent.answer}
+            return {**base, "status": "unknown", "already_received": False, "delivery_unknown": True, "found": None,
+                    "attempts": sent.attempts, "status_code": None, "chain_answer": sent.answer,
+                    "detail": "An earlier copy may have arrived (its answer was lost), the network answered "
+                              f"{sent.status_code}, and it does not list this order (yet). It may have arrived: read "
+                              "the account's orders before sending a new one."}
+        out: Dict[str, Any] = dict(sent.answer) if isinstance(sent.answer, dict) else {"answer": sent.answer}
+        out.setdefault("status_code", sent.status_code)
+        out["clientNonce"], out["attempts"] = nonce, sent.attempts
+        return out
+
+    def _post_once(self, path: str, body: Dict[str, Any]):
+        """One attempt: (status, answer, Retry-After)."""
+        r = _http.post(f"{self.rpc_url}{path}", json=body, timeout=self.timeout)
+        try:
+            j = r.json() if r.content else {}
+        except ValueError:
+            j = {"error": (getattr(r, "text", "") or "")[:300]}
+        headers = getattr(r, "headers", None) or {}
+        return r.status_code, j, headers.get("Retry-After")
+
+    def order_by_client_nonce(self, owner: str, client_nonce: int,
+                              signed: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        """The account's order with ``client_nonce`` as the network lists it: the resting order (``GET /orders``), else
+        its record (``GET /events/account``), else None. With ``signed`` (pair_id, side, size_18dec, price_8dec), only a
+        record that carries those values counts: another signer of the account may use the same millisecond nonce. A
+        failed read is None."""
+        want = str(int(client_nonce))
+        try:
+            rows = self._get(f"/orders/{owner}")
+            for o in rows if isinstance(rows, list) else []:
+                if isinstance(o, dict) and str(o.get("client_nonce")) == want and matches_signed(o, signed):
+                    return {"source": "orders", **o}
+        except Exception:
+            pass
+        try:
+            j = self._get(f"/events/account/{str(owner).lower()}?limit=50")
+            for e in (j.get("events") if isinstance(j, dict) else None) or []:
+                if isinstance(e, dict) and str(e.get("client_nonce")) == want and matches_signed(e, signed):
+                    return {"source": "events", **e}
+        except Exception:
+            pass
+        return None
 
     def cancel_order(self, session_key: str, owner: str, order_id: int) -> Dict[str, Any]:
         """Sign and submit a cancel for ``order_id``."""
         from eth_account import Account
 
+        from . import nonces
+
         signature = _sign_digest(session_key, self._digest(cancel_order_struct_hash(owner, order_id)))
         body = cancel_order_body(owner, Account.from_key(session_key).address, order_id, signature)
-        r = _http.post(
-            f"{self.rpc_url}/order/cancel", json=body, timeout=self.timeout
-        )
-        out = r.json() if r.content else {}
-        out.setdefault("status_code", r.status_code)
+        # a cancel carries no nonce; cancelling an order twice cancels it once, so a timeout sends the same body again.
+        # When an earlier copy may have arrived, the answer to a later one ("not found", a 5xx) is about that later
+        # copy: the account's resting orders decide.
+        read = lambda: self._get(f"/orders/{owner}")
+        records = lambda: self._get(f"/events/account/{str(owner).lower()}?limit=50")
+        try:
+            sent = nonces.send_same(lambda: self._post_once("/order/cancel", body))
+        except nonces.DeliveryUnknown as e:
+            if e.never_sent:
+                return {"status": "not_sent", "status_code": None, "attempts": e.attempts, "detail": str(e)}
+            return cancel_read_back(read, order_id, None, e.attempts, records)
+        if sent.needs_read_back:
+            return cancel_read_back(read, order_id, sent.answer, sent.attempts, records)
+        out = dict(sent.answer) if isinstance(sent.answer, dict) else {"answer": sent.answer}
+        out.setdefault("status_code", sent.status_code)
         return out

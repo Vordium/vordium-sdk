@@ -379,17 +379,50 @@ class Operator:
 
     def _checked_signer(self) -> SessionSigner:
         self._node.identity()          # raises NetworkMismatch when the node serves another network
+        # the signer signs under the process network's pin (caps.domain_separator); it must be the pin the node was
+        # checked against, or the order would be signed for one network and posted to another
+        from .network import PinMismatch, signing_pin
+        now, node = signing_pin(), self._node._pin
+        if node is None or (now.chain_id, now.genesis_sha256) != (node.chain_id, node.genesis_sha256):
+            raise PinMismatch("the configured network changed since this client was made; refusing to sign. "
+                              "Make a new client for the other network. Nothing was signed.")
         return self.signer
 
     # -- HTTP submit --------------------------------------------------------
-    def _post(self, path: str, body: dict) -> dict:
-        r = _http.post(
-            self.submit_url + path, json=body, timeout=self.box.timeout
-        )
+    def _post(self, path: str, body: dict, nonce: Optional[int] = None, dedup: bool = True, read_back=None) -> dict:
+        """Send the signed body. For a write the network applies once (an order, a cancel), a timeout, a lost
+        connection or a busy gateway sends the SAME body again (never a new nonce); for one it does not deduplicate
+        (``dedup=False``: take-profit / stop-loss) only a copy that never left this machine is sent again. When it is
+        not known whether the write arrived, the answer is ``{"status": "unknown", "delivery_unknown": True}``: read
+        the account before sending a new one."""
+        from . import nonces
+
+        def once():
+            r = _http.post(self.submit_url + path, json=body, timeout=self.box.timeout)
+            try:
+                j = r.json()
+            except Exception:
+                j = {"status_code": r.status_code, "text": r.text}
+            return r.status_code, j, (getattr(r, "headers", None) or {}).get("Retry-After")
+
+        unknown = {"status": "unknown", "delivery_unknown": True, "status_code": None}
         try:
-            return r.json()
-        except Exception:
-            return {"status_code": r.status_code, "text": r.text}
+            sent = nonces.send_same(once, nonce=nonce, dedup=dedup)
+        except nonces.DeliveryUnknown as e:
+            if e.never_sent:                                   # no copy left this machine: certainly not applied
+                return {"status": "not_sent", "status_code": None, "detail": str(e)}
+            if read_back is not None:
+                return read_back(None, e.attempts)
+            return {**unknown, "detail": str(e)}
+        if sent.needs_read_back and read_back is not None:
+            return read_back(sent.answer, sent.attempts)
+        if sent.needs_read_back:
+            # the network's nonce code also means "outside the window" or "used by another signer": not proof
+            return {**unknown, "chain_answer": sent.answer,
+                    "detail": "An earlier copy may have arrived (its answer was lost) and the network answered "
+                              f"{sent.status_code}. It may have arrived: read the account's orders before sending a "
+                              "new one."}
+        return sent.answer if isinstance(sent.answer, dict) else {"status_code": sent.status_code, "text": sent.answer}
 
     # -- place --------------------------------------------------------------
     def place_order(
@@ -399,7 +432,7 @@ class Operator:
         size: int,
         price: int,
         leverage_bps: int,
-        client_nonce: int,
+        client_nonce: Optional[int] = None,
         order_type: int = PlaceOrderType.LIMIT,
         reduce_only: bool = False,
         post_only: bool = False,
@@ -424,7 +457,9 @@ class Operator:
         non-zero ``trigger_price_8dec`` / ``trigger_dir`` (raises
         ``OrderNotAvailable``). ``reduce_only`` and ``post_only`` are the wire
         bools. All fields are bound into the EIP-712 digest. The SDK owns
-        ``client_nonce``; the chain does not assign nonces.
+        ``client_nonce``; the chain does not assign nonces. Left out, it comes
+        from the account's one clock (``vordium.mm.nonce_clock``), checked
+        against the network's window before signing.
 
         If ``precheck`` and ``caps`` are provided, the local
         ``agent_cap_check`` runs first and raises ``CapError`` on violation.
@@ -454,7 +489,11 @@ class Operator:
                 current_net_position=current_net_position,
             )
         wire_price = price if order_type in PRICED else 0
-        sig = self._checked_signer().sign_place(
+        signer = self._checked_signer()
+        if client_nonce is None:
+            from .mm import nonce_clock
+            client_nonce = nonce_clock(self.owner)()
+        sig = signer.sign_place(
             self.owner,
             pair_id,
             side,
@@ -472,7 +511,7 @@ class Operator:
             self.owner, self.signer.address, pair_id, side, size, wire_price, leverage_bps, order_type, reduce_only,
             post_only, trigger_price_8dec, trigger_dir, client_nonce, sig,
         )
-        return self._post("/order/place", body)
+        return {**self._post("/order/place", body, client_nonce), "clientNonce": client_nonce}
 
     # -- market convenience -------------------------------------------------
     def place_market_order(
@@ -510,8 +549,17 @@ class Operator:
 
     # -- cancel -------------------------------------------------------------
     def cancel_order(self, order_id: int) -> dict:
+        from .dex import cancel_read_back
+
         sig = self._checked_signer().sign_cancel(self.owner, order_id)
-        return self._post("/order/cancel", cancel_order_body(self.owner, self.signer.address, order_id, sig))
+
+        def get(path):
+            r = _http.get(f"{self.submit_url}{path}", timeout=self.box.timeout)
+            return r.json() if r.status_code == 200 else None
+        return self._post("/order/cancel", cancel_order_body(self.owner, self.signer.address, order_id, sig),
+                          read_back=lambda answer, attempts: cancel_read_back(
+                              lambda: get(f"/orders/{self.owner}"), order_id, answer, attempts,
+                              lambda: get(f"/events/account/{self.owner.lower()}?limit=50")))
 
     # -- modify -------------------------------------------------------------
     def modify_order(self, order_id: int, new_price: int, new_size: int) -> dict:
@@ -544,7 +592,7 @@ class Operator:
         )
         body = set_tpsl_body(self.owner, self.signer.address, pair_id, position_id, take_profit_8dec,
                              stop_loss_8dec, sig)
-        return self._post("/tpsl/set", body)
+        return self._post("/tpsl/set", body, dedup=False)
 
     def _triggers(self, pair_id, take_profit_8dec, stop_loss_8dec):
         from . import units

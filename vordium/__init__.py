@@ -24,7 +24,12 @@ from .network import (
     use_network,
     api_base,
     NETWORKS,
+    PinMismatch,
+    PinWarning,
+    UnpinnedNetwork,
+    signing_pin,
 )
+from .pins import PINS, Pin
 from .agent import Agent
 from .wallet import Wallet, KeyFileError
 from .chain import Chain
@@ -68,11 +73,15 @@ from .network import NetworkMismatch
 from .node_domain import NodeDomain, NodeIdentity, node_identity
 from .feeds import Feeds, FeedError, SeqTracker, Book
 
+# One nonce allocator per account and space; a resend that never signs twice for one intent.
+from . import nonces
+from .nonces import NonceAllocator, ClockOutOfWindow, DeliveryUnknown, ChainClock
+
 # Exact order units on each market's tick and lot.
 from . import units
 from .units import OrderValueError, SpecsUnavailable, NO_RULES
 
-__version__ = "1.4.9"
+__version__ = "1.4.10"
 __author__ = "Vordium"
 __all__ = [
     "Agent", "Wallet", "KeyFileError", "Chain", "Vordex",
@@ -100,7 +109,11 @@ __all__ = [
     "MarketMaker", "MMError", "Mmp", "Refusal", "Submitted", "NonceClock", "next_mmp_nonce", "pair_specs",
     "nonce_clock", "round_price", "round_size", "OpenOrder", "Position", "NetworkMismatch", "NodeDomain", "NodeIdentity",
     "node_identity",
+    # the pinned identity of each named network
+    "PINS", "Pin", "PinMismatch", "PinWarning", "UnpinnedNetwork", "signing_pin",
     "Feeds", "FeedError", "SeqTracker", "Book",
     # exact order units on each market's tick and lot
     "units", "OrderValueError", "SpecsUnavailable", "NO_RULES",
+    # nonces and resends
+    "nonces", "NonceAllocator", "ClockOutOfWindow", "DeliveryUnknown", "ChainClock",
 ]

@@ -32,7 +32,7 @@ from eth_account import Account
 from eth_account.messages import encode_typed_data
 from eth_utils import keccak
 
-from .network import get_network, NetworkResolutionError
+from .network import get_network, signing_pin
 from .caps import _vordcore_salt
 
 _CFG = json.loads((Path(__file__).parent / "eip712.json").read_text())
@@ -46,22 +46,19 @@ TYPES: Dict[str, Any] = _CFG["types"]
 
 
 def domain() -> Dict[str, Any]:
-    """The EIP-712 domain, with chainId + verifyingContract from the resolved
-    live network (name/version are protocol constants)."""
+    """The EIP-712 domain of the configured network, built from its PIN (vordium.pins): chainId and the
+    genesis-bound salt come from the pin, after the network's reported values were checked against it
+    (``signing_pin`` raises otherwise, and nothing is signed). name/version are protocol constants."""
     net = get_network()
-    if not getattr(net, "genesis_sha256", None):
-        raise NetworkResolutionError(
-            "genesis_sha256 unavailable from the node's /status — cannot build the genesis-bound "
-            "VordCore EIP-712 domain. The SDK refuses to sign rather than emit a rejected domain."
-        )
+    pin = signing_pin(net)
     return {
         "name": _DOMAIN_STATIC["name"],
         "version": _DOMAIN_STATIC["version"],
-        "chainId": net.chain_id,
+        "chainId": pin.chain_id,
         "verifyingContract": net.verifying_contract,
-        # The canonical 5th field; keccak(VORDIUM_VORDCORE\x01 || genesis_sha256).
+        # The canonical 5th field; keccak(VORDIUM_VORDCORE\x01 || genesis_sha256) of the PINNED genesis.
         # eth_account.encode_typed_data adds `bytes32 salt` to EIP712Domain automatically when present.
-        "salt": _vordcore_salt(net.genesis_sha256),
+        "salt": _vordcore_salt(pin.genesis_sha256),
     }
 
 

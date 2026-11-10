@@ -16,7 +16,8 @@ The signed op uses the VordCore domain (the same as PlaceOrder):
 ``nonce`` must be strictly above the account's last accepted ScheduleCancel nonce; a millisecond clock works.
 A 202 ``submitted`` is a submission, not an application: the read says what the chain holds.
 The domain is the node's own (:mod:`vordium.node_domain`): read from the ``/status`` of the node the request goes to and
-checked against the configured network, if any -- a mismatch refuses before anything is signed. :class:`KeepAlive`
+held to the pin of the network the client signs for (:mod:`vordium.pins`) -- a mismatch, or a node with no pin,
+refuses before anything is signed. :class:`KeepAlive`
 takes its nonces from the account's one clock (:func:`vordium.mm.nonce_clock`), shared with batches and single orders.
 The switch may not be active on a network yet: the read then says ``active: false`` and a POST answers 409
 ``not_active``. :class:`KeepAlive` reports that as a failed refresh -- nothing protects the orders then.
@@ -221,7 +222,10 @@ class KeepAlive:
 
     def _nonce(self, now_ms: int) -> int:
         # from the account's one clock (shared with batches and orders), never below the clock or the last one sent
-        self.last_nonce = self.nonce.next_at_least(max(now_ms, self.last_nonce + 1))
+        from .nonces import NonceAllocator
+        floor = max(now_ms, self.last_nonce + 1)
+        self.last_nonce = (self.nonce.next_at_least(floor, now_ms=now_ms) if isinstance(self.nonce, NonceAllocator)
+                           else self.nonce.next_at_least(floor))
         return self.last_nonce
 
     def refresh(self) -> Result:

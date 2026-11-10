@@ -10,28 +10,35 @@ Two DIFFERENT trust rules, because the two kinds of value fail differently:
       https://rpc.vordium.com/network-spec.json). A bad transport value
       fails LOUDLY and HARMLESSLY: a bad RPC just won't connect.
 
-  SIGNING DOMAIN — the EIP-712 ``chainId``.
-      A mismatched signing chainId is dangerous: it yields a VALID signature on
+  SIGNING DOMAIN — the EIP-712 ``chainId`` and the genesis-bound ``salt``.
+      A mismatched signing domain is dangerous: it yields a VALID signature on
       ANOTHER chain (an attacker who controls the spec/RPC could harvest
-      signatures valid elsewhere). So the chainId is NOT taken from any single
-      source. It is resolved by AGREEMENT: every available source —
+      signatures valid elsewhere). So every named network carries a PIN in the
+      SDK (:mod:`vordium.pins`: its chain id and genesis sha256), and the domain
+      is built from the pin. Every available source —
         * ``eth_chainId`` from the RPC you are actually sending to,
-        * the spec's ``chainId``,
-        * a user-pinned ``VORDIUM_CHAIN_ID`` (if set),
-      must be present-and-equal. ANY disagreement is a HARD FAILURE: the SDK
-      refuses to sign and reports each source's value. A pin is honoured as one
-      of the sources that must agree, never as an override that skips the check.
-      If NO source is available, it raises — never a baked constant.
+        * the spec's ``chainId`` and ``genesisSha256``,
+        * the node's ``/status`` ``genesis_sha256``,
+        * ``VORDIUM_CHAIN_ID`` / ``VORDIUM_GENESIS_SHA256`` (if set),
+      must equal the pin. The chain id sources must also agree with each other
+      (a disagreement is a HARD FAILURE, as before). When a read value differs
+      from the pin, reads still work (with a :class:`PinWarning`) but nothing is
+      signed (:class:`PinMismatch`). An endpoint of your own must say which
+      network it serves (``network=``) or carry an explicit pin (``pin=``, or
+      both environment values); without one it can be read, but nothing is
+      signed for it (:class:`UnpinnedNetwork`).
 """
 
 from __future__ import annotations
 
 import os
+import warnings
 from dataclasses import dataclass, field
-from typing import Dict, Optional
+from typing import Dict, Optional, Union
 
 import requests
 from . import _http
+from .pins import PINS, Pin, differences, normalize_genesis, refusal
 
 # The endpoints we ASK — never an assumed chainId (chainId is always agreed).
 DEFAULT_SPEC_URL = "https://rpc.vordium.com/network-spec.json"
@@ -73,6 +80,18 @@ class NetworkMismatch(NetworkResolutionError):
     Nothing is signed."""
 
 
+class PinMismatch(NetworkMismatch):
+    """The network reports a chain id or genesis other than the one it is pinned to. Nothing is signed."""
+
+
+class UnpinnedNetwork(NetworkMismatch):
+    """The endpoint is not a named network and carries no explicit pin. It can be read; nothing is signed for it."""
+
+
+class PinWarning(UserWarning):
+    """A read value differs from the network's pin. Reads continue; signing is refused."""
+
+
 class BridgeRefused(NetworkResolutionError):
     """The deposit bridge could not be confirmed: the address is not the one the live network spec publishes, or
     the spec could not be read. Nothing should be sent."""
@@ -109,6 +128,11 @@ class Network:
     # ``{api}/releases.json``).
     spec_url: Optional[str] = None
     releases_url: Optional[str] = None
+    # The pin this network is held to (vordium.pins). None for a network built by hand: then a named network's pin
+    # applies, else the network's own chain_id + genesis_sha256 (the caller wrote them). See signing_pin().
+    pin: Optional[Pin] = None
+    # Why nothing may be signed for this network (a read value differs from the pin, or the endpoint has no pin).
+    pin_problem: Optional[str] = None
 
 
 def api_base(net: "Network") -> str:
@@ -203,24 +227,71 @@ def _agree_chain_id(candidates: Dict[str, int]) -> int:
     return present.popitem()[1]
 
 
+def _env_pin() -> "tuple[Optional[int], Optional[str]]":
+    """``(VORDIUM_CHAIN_ID, VORDIUM_GENESIS_SHA256)`` as read from the environment (each None when unset)."""
+    c = os.getenv("VORDIUM_CHAIN_ID")
+    g = os.getenv("VORDIUM_GENESIS_SHA256")
+    cid = int(c, 0) if c else None
+    gen = None
+    if g:
+        gen = normalize_genesis(g)
+        if gen is None:
+            raise NetworkResolutionError("VORDIUM_GENESIS_SHA256 is not 64 hex characters")
+    return cid, gen
+
+
 def resolve_network(rpc_url: Optional[str] = None,
                     spec_url: Optional[str] = None,
                     timeout: float = 6.0,
-                    network: Optional[str] = None) -> Network:
-    """Discover transport from the spec; resolve the signing chainId by
-    AGREEMENT across every available source. Never a baked constant, never a
-    single trusted source for the signing domain.
+                    network: Optional[str] = None,
+                    pin: Optional[Union[Pin, str]] = None) -> Network:
+    """Discover transport from the spec, resolve the chain id by AGREEMENT across every available source, and hold
+    what the network reports to its pin.
 
     ``network`` names the network ("mainnet" — the default — or "testnet"; else VORDIUM_NETWORK). It chooses where
-    the SDK asks (see NETWORKS); it never supplies a chain id. An explicit ``rpc_url`` (or VORDIUM_RPC_URL) still
-    wins: that node is used for JSON-RPC and REST alike, as before."""
+    the SDK asks (see NETWORKS) and the pin it is held to (:data:`vordium.pins.PINS`). An explicit ``rpc_url`` (or
+    VORDIUM_RPC_URL) still wins for transport: that node is used for JSON-RPC and REST alike. Such an endpoint is
+    held to the pin of the network you name, or to ``pin`` (a :class:`~vordium.pins.Pin`, or a network name), or to
+    ``VORDIUM_CHAIN_ID`` + ``VORDIUM_GENESIS_SHA256``; with none of them it is read but never signed for.
+
+    A read value that differs from the pin does not stop reads (a :class:`PinWarning` is issued); it stops signing
+    (:func:`signing_pin` raises :class:`PinMismatch`)."""
     env_chain = os.getenv("VORDIUM_CHAIN_ID")
     env_rpc = os.getenv("VORDIUM_RPC_URL")
     custom_rpc = rpc_url or env_rpc
-    pin = int(env_chain, 0) if env_chain else None
+    env_cid, env_gen = _env_pin()
+    if isinstance(pin, str):
+        if network and str(network).strip().lower() != pin.strip().lower():
+            raise NetworkResolutionError(f"network {network!r} and pin {pin!r} name different networks")
+        network, pin = pin, None
     named = network or os.getenv("VORDIUM_NETWORK") or None
-    name = str(named).strip().lower() if named else "mainnet"
-    preset = _preset(name)
+    if not named and custom_rpc and pin is None:
+        # an address that IS a named network's own JSON-RPC or REST base names that network
+        for key, pre in NETWORKS.items():
+            if custom_rpc.rstrip("/") in {(pre.get(k) or "").rstrip("/") for k in ("rpc", "api") if pre.get(k)}:
+                named = key
+    name = str(named).strip().lower() if named else ("mainnet" if not custom_rpc or pin is not None else None)
+    preset = _preset(name or "mainnet")
+    # The pin this network is held to: the one passed, else the named network's, else both environment values.
+    held: Optional[Pin] = None
+    pin_problem: Optional[str] = None
+    if pin is not None:
+        if not isinstance(pin, Pin):
+            raise NetworkResolutionError("pin must be a vordium.pins.Pin or a network name")
+        held = pin
+        if named and PINS.get(name) is not None and PINS[name] != Pin(pin.chain_id, pin.genesis_sha256, name):
+            raise NetworkResolutionError(f"the pin given is not {name}'s pin (chain {PINS[name].chain_id}, genesis "
+                                         f"{PINS[name].genesis_sha256}); pass one or the other")
+        if not named:
+            name = None
+    elif name is not None:
+        held = PINS.get(name)
+    elif env_cid is not None and env_gen is not None:
+        held = Pin(env_cid, env_gen)
+    else:
+        pin_problem = (f"Refusing to sign: the endpoint {custom_rpc} is not a named network and has no pin. Say which "
+                       "network it serves (network=\"mainnet\" or \"testnet\"), or pass pin=Pin(chain_id, "
+                       "genesis_sha256), or set both VORDIUM_CHAIN_ID and VORDIUM_GENESIS_SHA256. Nothing was signed.")
 
     if env_chain and not custom_rpc and not named:
         raise NetworkResolutionError(
@@ -260,9 +331,8 @@ def resolve_network(rpc_url: Optional[str] = None,
                 "refusing to resolve the test network from it."
             )
         if spec:
-            if name == "testnet":
-                g = spec.get("genesisSha256")
-                spec_genesis = (g[2:] if g[:2] in ("0x", "0X") else g).lower() if isinstance(g, str) else None
+            g = spec.get("genesisSha256")
+            spec_genesis = normalize_genesis(g) if isinstance(g, str) else None
             rpc = spec.get("rpc") or preset["rpc"]
             ws = spec.get("ws")
             explorer = spec.get("explorer")
@@ -292,17 +362,30 @@ def resolve_network(rpc_url: Optional[str] = None,
         candidates["eth_chainId"] = onchain_cid
     if spec_chain_id is not None:
         candidates["spec"] = spec_chain_id
-    if pin is not None:
-        candidates["pinned(VORDIUM_CHAIN_ID)"] = pin
+    if env_cid is not None:
+        candidates["pinned(VORDIUM_CHAIN_ID)"] = env_cid
 
     chain_id = _agree_chain_id(candidates)  # raises on disagreement / none
 
     genesis_sha256 = _status_genesis_sha256(api_url or rpc, timeout)
-    if spec_genesis and genesis_sha256 and spec_genesis != genesis_sha256:
+    if name == "testnet" and spec_genesis and genesis_sha256 and spec_genesis != genesis_sha256:
         raise NetworkResolutionError(
             f"the spec names genesis {spec_genesis[:8]}… but the node serves genesis {genesis_sha256[:8]}…; "
             "refusing to sign for either."
         )
+    if held is not None:
+        problems = differences(
+            held,
+            {"eth_chainId": onchain_cid, "the network spec": spec_chain_id, "VORDIUM_CHAIN_ID": env_cid},
+            {"the node's /status": genesis_sha256, "the network spec": spec_genesis, "VORDIUM_GENESIS_SHA256": env_gen})
+        if onchain_cid is None:
+            problems.append(f"eth_chainId of {rpc} did not answer, expected {held.chain_id}")
+        if genesis_sha256 is None:
+            problems.append(f"the node's /status reports no genesis, expected {held.genesis_sha256}")
+        if problems:
+            pin_problem = refusal(held, problems)
+    if pin_problem:
+        warnings.warn(pin_problem, PinWarning, stacklevel=2)
     return Network(
         chain_id=chain_id,
         genesis_sha256=genesis_sha256,
@@ -323,7 +406,35 @@ def resolve_network(rpc_url: Optional[str] = None,
         api_url=api_url,
         spec_url=spec_url,
         releases_url=releases_url,
+        pin=held,
+        pin_problem=pin_problem,
     )
+
+
+def signing_pin(net: Optional[Network] = None) -> Pin:
+    """The pin to sign under for ``net`` (default: the configured network), after every check. Raises
+    :class:`UnpinnedNetwork` when the network has no pin and :class:`PinMismatch` when what it reports differs from
+    the pin; in both cases nothing may be signed. Every signing path in the SDK calls this first and builds its
+    EIP-712 domain from the returned pin."""
+    net = net if net is not None else get_network()
+    problem, pin, name = (getattr(net, "pin_problem", None), getattr(net, "pin", None), getattr(net, "name", None))
+    if problem:
+        raise (UnpinnedNetwork if pin is None else PinMismatch)(problem)
+    if pin is None and name is not None and name in PINS:
+        pin = PINS[name]
+    if pin is None:
+        g = normalize_genesis(getattr(net, "genesis_sha256", None))
+        if g is None:
+            raise UnpinnedNetwork("Refusing to sign: the network names no genesis, so no signing domain can be "
+                                  "built. Nothing was signed.")
+        pin = Pin(int(net.chain_id), g)
+    reported_genesis = getattr(net, "genesis_sha256", None) or None
+    problems = differences(pin, {"the network": net.chain_id}, {"the network": reported_genesis})
+    if reported_genesis is None:
+        problems.append(f"the network reports no genesis, expected {pin.genesis_sha256}")
+    if problems:
+        raise PinMismatch(refusal(pin, problems))
+    return pin
 
 
 # --- the deposit bridge: an allow-list of one, read live ---------------------
@@ -395,7 +506,8 @@ def explicit_network() -> Optional[Network]:
 
 def use_network(name: str, rpc_url: Optional[str] = None, timeout: float = 6.0) -> Network:
     """Resolve the named network ("mainnet" or "testnet") and set it as the configured network (see set_network).
-    ``rpc_url`` — an address of your own — still wins. Returns the resolved network."""
+    ``rpc_url`` — an address of your own — still wins for transport and is held to that network's pin. Returns the
+    resolved network."""
     n = resolve_network(rpc_url=rpc_url, timeout=timeout, network=name)
     set_network(n)
     return n
@@ -421,6 +533,27 @@ def releases_url(net: Network, rpc_url: Optional[str] = None) -> str:
     if rpc_url:
         return rpc_url.rstrip("/") + "/releases.json"
     return net.releases_url or (api_base(net) + "/releases.json")
+
+
+def require_message_pin(message: str, net: Optional[Network] = None) -> Pin:
+    """Check an EIP-191 message's ``Chain: <id>`` (line 2) and, when present, ``Genesis: <sha256>`` (line 3) against
+    the pin of ``net`` (default: the configured network). Raises :class:`PinMismatch` / :class:`UnpinnedNetwork`
+    before anything is signed; returns the pin."""
+    pin = signing_pin(net)
+    lines = str(message).split("\n")
+    if len(lines) < 2 or not lines[1].startswith("Chain: "):
+        raise ValueError('an EIP-191 message must carry "Chain: <id>" as line 2')
+    problems = []
+    c = lines[1][len("Chain: "):].strip()
+    if not c.isdigit() or int(c) != pin.chain_id:
+        problems.append(f"the message names chain {c}, expected {pin.chain_id}")
+    if len(lines) > 2 and lines[2].startswith("Genesis: "):
+        g = lines[2][len("Genesis: "):].strip()
+        if normalize_genesis(g) != pin.genesis_sha256:
+            problems.append(f"the message names genesis {g}, expected {pin.genesis_sha256}")
+    if problems:
+        raise PinMismatch(refusal(pin, problems))
+    return pin
 
 
 def reset_network() -> None:

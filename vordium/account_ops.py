@@ -7,7 +7,7 @@ only once the chain's own read shows the change, and ``applied=False`` with the 
 
 * **Session key** — ``SessionCreate`` / ``SessionRevoke`` in the ``VordexSession`` domain. The chain keeps one session
   per account, so a session it holds for another key is revoked first. Each nonce is larger than the last
-  (milliseconds, or the previous nonce + 1). A session lasts at most 90 days less an hour (the app's rule).
+  (milliseconds, or the previous nonce + 1), from the account's allocator (:mod:`vordium.nonces`). A session lasts at most 90 days less an hour (the app's rule).
 * **TWAP** — ``PlaceTwap`` / ``CancelTwap`` in the ``VordCore`` domain, signed by the account's own key: a session key
   is refused for these. The route and the limits come from the network spec's ``twap`` section; a spec whose signed
   type differs from this SDK's is refused before anything is signed.
@@ -75,7 +75,8 @@ def sign_digest(private_key: str, d: bytes) -> str:
 
 
 def next_nonce(after: int = 0, now_ms: Optional[int] = None) -> int:
-    """Larger than the last nonce: the time in ms, or the previous nonce + 1."""
+    """Larger than ``after``: the time in ms, or ``after`` + 1. Pure; :class:`AccountOps` takes its nonces from the
+    account's allocator (:mod:`vordium.nonces`), which also rises across processes."""
     return max(int(time.time() * 1000) if now_ms is None else now_ms, after + 1)
 
 
@@ -194,10 +195,31 @@ def plan_twap(duration_ms: int, r: TwapRules, total_notional_6dec: Optional[int]
     return n, duration_ms // n
 
 
+def twap_matches(row: Dict[str, Any], signed: Dict[str, Any]) -> bool:
+    """Whether a TWAP the chain lists is the one signed: its client nonce, market, side and total size (another signer
+    of the account may use the same millisecond nonce). A field the row does not show is not counted."""
+    if not isinstance(row, dict) or str(row.get("client_nonce")) != str(signed["clientNonce"]):
+        return False
+    for keys, want in ((("pair_id",), signed["pairId"]), (("side",), signed["side"]),
+                       (("total_size_18dec", "total_size"), signed["totalSize18dec"])):
+        for k in keys:
+            if k in row and row[k] is not None:
+                got = row[k]
+                if k == "side" and isinstance(got, str) and not got.isdigit():
+                    got = {"buy": 0, "b": 0, "long": 0, "sell": 1, "s": 1, "short": 1}.get(got.strip().lower(), -1)
+                if str(got) != str(int(want)):
+                    return False
+                break
+    return True
+
+
 # ── the client ──────────────────────────────────────────────────────────────────────────────────────────────────────
 @dataclass
 class Result:
-    applied: bool
+    """``applied``: True once the chain's own read shows the change; False only when the write was refused and so
+    certainly did not apply; None when it may have been received (submitted, or its answer was lost) and the chain's
+    read has not shown it within the wait: read the account again before sending it anew."""
+    applied: Optional[bool]
     status_code: int
     answer: Any
     detail: str = ""
@@ -210,30 +232,82 @@ class AccountOps:
     size and price bounds go onto the market's lot and tick, read from ``GET /markets/specs`` unless ``specs`` is given."""
 
     def __init__(self, owner_key: str, network=None, rest: Optional[str] = None, timeout: float = 15.0,
-                 identity: Optional[Callable[[], Any]] = None, specs: Any = None):
+                 identity: Optional[Callable[[], Any]] = None, specs: Any = None, attempts: int = 3,
+                 chain_clock: Any = "auto"):
         self.specs = specs
+        self.attempts = attempts
         from eth_account import Account
         from .network import api_base, get_network
-        from .node_domain import node_identity, check
+        from .node_domain import node_identity, pin_ident
         self.net = network or get_network()
         self.rest = (rest or api_base(self.net)).rstrip("/")
         self.key = owner_key
         self.owner = Account.from_key(owner_key).address
         self.timeout = timeout
-        ident = (identity or (lambda: node_identity(self.rest)))()
-        self.ident = check(ident, self.net)
+        self.ident = (identity or (lambda: node_identity(self.rest)))()
+        # the node's identity must equal the network's pin (vordium.pins); refused otherwise
+        self.pin = pin_ident(self.ident, self.net, self.rest)
+        from . import nonces
+        self._chain = nonces.chain_clock_for(self.rest, self.net) if chain_clock == "auto" else chain_clock
 
-    # domains (bound to the node's genesis, checked against the configured network)
+    def _nonce(self, space: str) -> int:
+        """A fresh nonce of this account in ``space`` (``orders`` for TWAP client nonces, ``account`` for session and
+        margin-mode nonces), checked against the network's window before anything is signed."""
+        from . import nonces
+        return nonces.fresh(nonces.allocator(self.owner, space), 0, getattr(self, "_chain", None))
+
+    # domains (built from the pin, which the node's identity equals)
     def separator(self, domain_class: str) -> bytes:
-        return _domains.separator(domain_class, self.ident.chain_id, self.ident.genesis_sha256)
+        from .node_domain import pin_ident
+        pin = pin_ident(self.ident, self.net, self.rest)     # checked again for every signature
+        return _domains.separator(domain_class, pin.chain_id, pin.genesis_sha256)
 
-    def _post(self, path: str, body: str) -> Tuple[int, Any]:
-        from ._http import session                   # one attempt, never retried; the body is sent byte for byte
-        r = session().post(f"{self.rest}{path}", data=body.encode(), headers={"Content-Type": "application/json"}, timeout=self.timeout)
+    def _post(self, path: str, body: str, dedup: bool = True) -> Tuple[int, Any]:
+        """Send the signed body byte for byte. For a write the network applies once per nonce (session keys, TWAP), a
+        timeout, a lost connection or a busy gateway sends the SAME bytes again (never a new nonce); for one it does not
+        deduplicate (``dedup=False``: margin mode) only a copy that never left this machine is sent again. When it is
+        not known whether the write arrived, the answer is ``(0, {"status": "unknown", ...})`` and the caller reads the
+        chain back, which alone decides ``applied``."""
+        from ._http import session
+        from . import nonces
+        data = body.encode()
+
+        def once():
+            r = session().post(f"{self.rest}{path}", data=data, headers={"Content-Type": "application/json"}, timeout=self.timeout)
+            try:
+                j = r.json()
+            except ValueError:
+                j = r.text[:300]
+            return r.status_code, j, (getattr(r, "headers", None) or {}).get("Retry-After")
+
         try:
-            return r.status_code, r.json()
-        except ValueError:
-            return r.status_code, r.text[:300]
+            sent = nonces.send_same(once, attempts=getattr(self, "attempts", 3), dedup=dedup)
+        except nonces.DeliveryUnknown as e:
+            if e.never_sent:                                   # no copy left this machine: certainly not applied
+                return 0, {"status": "not_sent", "detail": str(e)}
+            return 0, {"status": "unknown", "detail": str(e)}
+        if sent.needs_read_back:
+            return 0, {"status": "unknown", "answer": sent.answer,
+                       "detail": f"an earlier copy may have arrived and the network answered {sent.status_code}"}
+        return sent.status_code, sent.answer
+
+    def _outcome(self, code: Any, ans: Any, shows: Callable[[], bool], wait_s: float, not_shown: str) -> "Result":
+        """The result of a write by the chain's own read: applied when it shows the change; refused (False) only when
+        the network refused it; else not known yet (None)."""
+        if not self._took(code, ans):
+            not_sent = isinstance(ans, dict) and ans.get("status") == "not_sent"
+            return Result(False, code, ans, "the network could not be reached: nothing was sent" if not_sent
+                          else "the network refused it")
+        if self._wait(shows, wait_s):
+            return Result(True, code, ans, "")
+        return Result(None, code, ans, f"{not_shown} yet; it may still apply (it was "
+                      + ("received" if isinstance(code, int) and 200 <= code < 300 else "possibly received")
+                      + "): read the account again before sending it anew")
+
+    @staticmethod
+    def _took(code: Any, ans: Any) -> bool:
+        """The network took the write (2xx), or it is not known: either way the chain's own read decides."""
+        return (isinstance(code, int) and 200 <= code < 300) or (isinstance(ans, dict) and ans.get("status") == "unknown")
 
     def _get(self, path: str) -> Any:
         from . import _http
@@ -263,31 +337,34 @@ class AccountOps:
         held = self.session()
         if held is None:
             return Result(True, 0, None, "no session to revoke")
-        n = next_nonce()
+        n = self._nonce("account")
         sig = sign_digest(self.key, digest(self.separator("VordexSession"), "SessionRevoke", SESSION_REVOKE, {"owner": self.owner, "nonce": n}))
         code, ans = self._post("/session/revoke", session_revoke_body(self.owner, held["session_key"], n, sig))
-        ok = 200 <= code < 300 and self._wait(lambda: self.session() is None, wait_s)
-        return Result(ok, code, ans, "" if ok else "the chain still holds the session")
+        return self._outcome(code, ans, lambda: self.session() is None, wait_s, "the chain still holds the session")
 
     def create_session(self, session_key_address: str, end_ms: int, wait_s: float = 60.0) -> Result:
         """Give ``session_key_address`` (a session key, or a registered agent's key) this account's session until
         ``end_ms``. A session the chain holds for another key is revoked first (one more signature)."""
         held = self.session()
-        after = 0
         if held and held["session_key"].lower() != session_key_address.lower():
             r = self.revoke_session()
-            if not r.applied:
-                return Result(False, r.status_code, r.answer, "the account's other session could not be ended")
-            after = next_nonce()
-        n, exp = next_nonce(after), session_end(end_ms)
+            if r.applied is not True:
+                return Result(r.applied, r.status_code, r.answer, "the account's other session could not be ended"
+                              + ("" if r.applied is False else " (not known yet)"))
+        n, exp = self._nonce("account"), session_end(end_ms)
         sig = sign_digest(self.key, digest(self.separator("VordexSession"), "SessionCreate", SESSION_CREATE,
                                            {"sessionKey": session_key_address, "expiresAt": exp, "nonce": n}))
         code, ans = self._post("/session/create", session_create_body(self.owner, session_key_address, exp, n, sig))
         mine = lambda: (lambda s: bool(s) and s["session_key"].lower() == session_key_address.lower() and s.get("confirmed") is True)(self.session())
-        ok = 200 <= code < 300 and self._wait(mine, wait_s)
-        return Result(ok, code, ans, "" if ok else "the chain does not show the session as confirmed")
+        return self._outcome(code, ans, mine, wait_s, "the chain does not show the session as confirmed")
 
     # TWAP
+    def twap_records(self) -> List[Dict[str, Any]]:
+        """The account's TWAP records (started, slices, ended): ``GET /events/account/{address}``, kinds ``twap_*``."""
+        j = self._get(f"/events/account/{self.owner.lower()}?limit=50")
+        ev = j.get("events") if isinstance(j, dict) else None
+        return [e for e in ev or [] if isinstance(e, dict) and str(e.get("kind", "")).startswith("twap")]
+
     def twaps(self) -> List[Dict[str, Any]]:
         j = self._get(f"/twaps/{self.owner.lower()}")
         rows = j.get("twaps") if isinstance(j, dict) else j
@@ -302,16 +379,16 @@ class AccountOps:
         n = num_slices if num_slices is not None else plan_twap(duration_ms, rules)[0]
         total_size_18dec, min_price_8dec, max_price_8dec = self.twap_on_steps(pair_id, total_size_18dec, n,
                                                                               min_price_8dec, max_price_8dec)
-        cn = next_nonce()
+        cn = self._nonce("orders")
         v = {"owner": self.owner, "pairId": pair_id, "side": side, "totalSize18dec": total_size_18dec, "numSlices": n,
              "durationMs": duration_ms, "leverageBps": leverage_bps, "slippageBps": slippage_bps, "randomize": randomize,
              "triggerPrice8dec": 0, "triggerDir": 0, "minPrice8dec": min_price_8dec, "maxPrice8dec": max_price_8dec,
              "clientNonce": cn}
         sig = sign_digest(self.key, digest(self.separator("VordCore"), "PlaceTwap", PLACE_TWAP, v))
         code, ans = self._post(rules.path, twap_body(v, sig))
-        held = lambda: any(str(t.get("client_nonce")) == str(cn) for t in self.twaps())
-        ok = 200 <= code < 300 and self._wait(held, wait_s)
-        return Result(ok, code, ans, "" if ok else "the chain does not list the TWAP")
+        # the nonce AND what was signed, among the live TWAPs or the ended ones (the account's twap_* records)
+        held = lambda: any(twap_matches(t, v) for t in self.twaps()) or any(twap_matches(e, v) for e in self.twap_records())
+        return self._outcome(code, ans, held, wait_s, "the chain does not list the TWAP")
 
     def twap_on_steps(self, pair_id: int, total_size_18dec: Any, num_slices: int, min_price_8dec: Any = 0,
                       max_price_8dec: Any = 0) -> Tuple[int, int, int]:
@@ -336,13 +413,12 @@ class AccountOps:
         return total, lo, hi
 
     def cancel_twap(self, rules: TwapRules, twap_id: int, wait_s: float = 30.0) -> Result:
-        cn = next_nonce()
+        cn = self._nonce("orders")
         sig = sign_digest(self.key, digest(self.separator("VordCore"), "CancelTwap", CANCEL_TWAP,
                                            {"owner": self.owner, "twapId": twap_id, "clientNonce": cn}))
         code, ans = self._post(rules.cancel_path, cancel_twap_body(self.owner, twap_id, cn, sig))
         gone = lambda: all(str(t.get("twap_id", t.get("id"))) != str(twap_id) for t in self.twaps())
-        ok = 200 <= code < 300 and self._wait(gone, wait_s)
-        return Result(ok, code, ans, "" if ok else "the chain still lists the TWAP")
+        return self._outcome(code, ans, gone, wait_s, "the chain still lists the TWAP")
 
     # margin mode
     def margin_modes(self) -> Optional[Dict[str, Any]]:
@@ -362,9 +438,8 @@ class AccountOps:
     def set_margin_mode(self, pair_id: int, mode: str, wait_s: float = 30.0) -> Result:
         if mode not in MODE_CODE:
             raise ValueError("mode is cross or isolated")
-        n = next_nonce()
+        n = self._nonce("account")
         sig = sign_digest(self.key, digest(self.separator("VordCore"), "SetMarginMode", SET_MARGIN_MODE,
                                            {"owner": self.owner, "pairId": pair_id, "mode": MODE_CODE[mode], "nonce": n}))
-        code, ans = self._post("/margin/mode", margin_mode_body(self.owner, pair_id, MODE_CODE[mode], n, sig))
-        ok = code == 202 and self._wait(lambda: self.mode_of(pair_id) == mode, wait_s)
-        return Result(ok, code, ans, "" if ok else "the chain does not show the new mode")
+        code, ans = self._post("/margin/mode", margin_mode_body(self.owner, pair_id, MODE_CODE[mode], n, sig), dedup=False)
+        return self._outcome(code, ans, lambda: self.mode_of(pair_id) == mode, wait_s, "the chain does not show the new mode")

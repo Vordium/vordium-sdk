@@ -3,7 +3,8 @@ import asyncio
 import warnings
 import requests
 from web3 import Web3
-from .network import get_network
+from .network import PinMismatch, get_network, signing_pin
+from .pins import refusal
 from .wallet import Wallet
 
 
@@ -62,7 +63,12 @@ class Agent:
         return self._w3.eth.block_number
 
     def send(self, to: str, amount: float) -> str:
-        """Send VORD to an address."""
+        """Send VORD to an address. The network must match its pin (chain id and genesis), and the node's own
+        ``eth_chainId`` must equal the pinned chain id, else nothing is signed."""
+        pin = signing_pin(self._net)
+        live = int(self._w3.eth.chain_id)
+        if live != pin.chain_id:
+            raise PinMismatch(refusal(pin, [f"eth_chainId reports chain id {live}, expected {pin.chain_id}"]))
         nonce = self._w3.eth.get_transaction_count(self.address)
         tx = {
             'to': Web3.to_checksum_address(to),
@@ -70,7 +76,7 @@ class Agent:
             'gas': 21000,
             'gasPrice': self._w3.eth.gas_price,
             'nonce': nonce,
-            'chainId': self._net.chain_id
+            'chainId': pin.chain_id
         }
         signed = self._w3.eth.account.sign_transaction(tx, self.private_key)
         raw = getattr(signed, 'raw_transaction', None) or signed.rawTransaction

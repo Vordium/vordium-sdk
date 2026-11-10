@@ -23,7 +23,8 @@ the SAME per-account window, so a client takes all of them from one clock: :func
 :class:`vordium.schedule_cancel.KeepAlive` use it by default.
 
 The signing domain is the node's own (:mod:`vordium.node_domain`): read from the ``/status`` of the node the client posts
-to, and checked against the network the caller configured, if any. A mismatch refuses before anything is signed.
+to, and held to the pin of the network the client signs for (:mod:`vordium.pins`). A mismatch, or a node with no pin,
+refuses before anything is signed.
 
 Nothing here caches a chain value: limits, ticks and lots come from :meth:`MarketMaker.specs` when they are needed.
 """
@@ -299,6 +300,14 @@ class Submitted:
     refusal: Optional[Refusal] = None
     actions: Tuple[ActionStatus, ...] = ()
     nonce: Optional[int] = None
+    #: True when the network's committed state shows this write (read back after a resent copy). Read committed state
+    #: for what it did.
+    already_received: bool = False
+    #: How many copies of the same signed request were sent (a timeout or a busy gateway sends it again, unchanged).
+    attempts: int = 1
+    #: True when it is not known whether the network received the write (the answer was lost, and the write is not one
+    #: the network applies once per nonce, so it was not sent again). ``ok`` is False: read committed state.
+    unknown: bool = False
 
 
 def read_answer(status_code: Optional[int], j: Any, retry_after: Optional[str] = None) -> Submitted:
@@ -320,6 +329,11 @@ def read_answer(status_code: Optional[int], j: Any, retry_after: Optional[str] =
                 acts.append(ActionStatus(a["index"], False, refusal(a.get("code"), a.get("error"))))
         return Submitted(True, status_code, None, tuple(acts))
     code = j.get("code")
+    if isinstance(status_code, int) and status_code >= 500 and not code:
+        # a gateway or node error: the write may have reached the chain, so it is neither refused nor accepted
+        return Submitted(False, status_code, Refusal("delivery_unknown", f"The network answered {status_code}: it is not "
+                                                     "known whether it received the write. Read committed state before "
+                                                     "sending a new one."), (), None, False, 1, True)
     if status_code == 429 and not code:
         code = "mempool_full"
     if code == "agent_refused":   # an agent check at intake: the reason key, and its meaning as the chain gives it
@@ -331,7 +345,9 @@ def read_answer(status_code: Optional[int], j: Any, retry_after: Optional[str] =
 
 
 class NonceClock:
-    """Rising millisecond nonces: never the same twice in one process, never below the clock."""
+    """Rising millisecond nonces kept in memory: never the same twice in one process, never below the clock. The
+    account's shared clock (:func:`nonce_clock`) is a :class:`vordium.nonces.NonceAllocator`, which also rises across
+    processes and restarts."""
 
     def __init__(self, clock: Callable[[], float] = time.time):
         self._clock, self._last, self._lock = clock, 0, threading.Lock()
@@ -351,27 +367,35 @@ class NonceClock:
             self._last = max(self._last, int(nonce))
 
 
-_CLOCKS: Dict[str, NonceClock] = {}
+_CLOCKS: Dict[str, Any] = {}
 _CLOCKS_LOCK = threading.Lock()
 
 
-def nonce_clock(owner: str) -> NonceClock:
-    """The one nonce clock of ``owner`` in this process, shared by batches, cancels, modifies, the dead-man switch and
-    single orders: the chain admits them all through one per-account window, so they must never collide."""
+def nonce_clock(owner: str):
+    """The one nonce clock of ``owner``, shared by batches, cancels, modifies, the dead-man switch, TWAP orders and
+    single orders: the chain admits them all through one per-account window, so they must never collide. It is the
+    account's :class:`vordium.nonces.NonceAllocator` in the ``orders`` space: strictly rising across threads, processes
+    and restarts on this machine, never back when the clock goes back, and checked against the window before use."""
+    from . import nonces
+
     k = str(owner).lower()
     with _CLOCKS_LOCK:
-        if k not in _CLOCKS:
-            _CLOCKS[k] = NonceClock()
-        return _CLOCKS[k]
+        c = _CLOCKS.get(k)
+        if c is None or c is not nonces.allocator(k, nonces.ORDERS):
+            c = _CLOCKS[k] = nonces.allocator(k, nonces.ORDERS)
+        return c
 
 
 # --- the client ----------------------------------------------------------------------------------------------------
 class MarketMaker:
     """Signs and submits market-maker writes for ``owner`` with ``signer_key`` (the owner key or a live session key).
 
-    The signing domain is the node's: its chain id and genesis are read from ``rpc_url``'s ``/status`` and checked against
-    ``network`` (or the network set with :func:`vordium.network.set_network`, or the environment pins) when one is
-    configured; a mismatch raises :class:`vordium.network.NetworkMismatch` before anything is signed. A
+    The signing domain is the node's: its chain id and genesis are read from ``rpc_url``'s ``/status`` and must equal the
+    pin of ``network`` (a resolved network, a network name such as ``"testnet"``, or a :class:`vordium.pins.Pin`), else
+    of the network set with :func:`vordium.network.set_network`, else of the environment, else of the named network
+    whose address ``rpc_url`` is (:func:`vordium.node_domain.configured_pin`). A mismatch raises
+    :class:`vordium.network.PinMismatch` and a node with no pin :class:`vordium.network.UnpinnedNetwork`, before
+    anything is signed. A
     ``domain_separator`` given here must equal the node's (it pins, never overrides). Nonces come from the account's one
     clock (:func:`nonce_clock`) unless ``nonce`` is given. ``post``/``get``/``identity`` are injectable for tests.
 
@@ -382,8 +406,12 @@ class MarketMaker:
 
     def __init__(self, rpc_url: str, signer_key: str, owner: str, domain_separator: Optional[bytes] = None,
                  timeout: float = 10.0, nonce: Optional[NonceClock] = None, post=None, get=None,
-                 network=None, identity: Optional[Callable[[], NodeIdentity]] = None, specs: Any = None):
+                 network=None, identity: Optional[Callable[[], NodeIdentity]] = None, specs: Any = None,
+                 attempts: int = 3, chain_clock: Any = "auto"):
+        from . import nonces
+
         self.rpc_url = rpc_url.rstrip("/")
+        self.attempts = attempts
         self._specs = specs
         self.owner = owner
         self._key = signer_key
@@ -393,6 +421,10 @@ class MarketMaker:
         self._get = get or self._http_get
         self.domain = NodeDomain(self.rpc_url, network, domain_separator,
                                  identity or (lambda: read_identity(self._get("/status"))))
+        # the network's block time for the nonce window check: read from this client's network unless the transport is
+        # injected (a test) or a clock is given; None checks against this computer's clock
+        self._chain = (nonces.chain_clock_for(self.rpc_url, network) if chain_clock == "auto" and post is None
+                       and get is None else (None if chain_clock == "auto" else chain_clock))
 
     # transport
     def _http_post(self, path: str, body: Dict[str, Any]):
@@ -417,10 +449,28 @@ class MarketMaker:
     def _sig(self, struct_hash: bytes) -> str:
         return sign(self._key, digest(struct_hash, self.domain.separator()))
 
+    def _fresh(self) -> int:
+        """A new nonce from the account's clock, checked against the network's window (raises
+        :class:`vordium.nonces.ClockOutOfWindow` before anything is signed)."""
+        from . import nonces
+
+        return nonces.fresh(self.nonce, 0, getattr(self, "_chain", None))
+
     def _send(self, path: str, body: Dict[str, Any], nonce: Optional[int] = None) -> Submitted:
-        code, j, ra = self._post(path, body)
-        s = read_answer(code, j, ra)
-        return Submitted(s.ok, s.status_code, s.refusal, s.actions, nonce)
+        """Send the signed body. The network does not apply these writes once per nonce (a cancel-all signed once is
+        accepted twice), so a copy is sent again only when the first never left this machine; after a lost answer or a
+        gateway error the result is ``unknown`` (``ok`` False): read committed state before sending a new one."""
+        from . import nonces
+
+        try:
+            sent = nonces.send_same(lambda: self._post(path, body), attempts=getattr(self, "attempts", 3), nonce=nonce,
+                                    dedup=False)
+        except nonces.DeliveryUnknown as e:
+            if e.never_sent:                                   # no copy left this machine: certainly not applied
+                return Submitted(False, None, Refusal("not_sent", str(e)), (), nonce, False, e.attempts, False)
+            return Submitted(False, None, Refusal("delivery_unknown", str(e)), (), nonce, False, e.attempts, True)
+        s = read_answer(sent.status_code, sent.answer, sent.retry_after)
+        return Submitted(s.ok, s.status_code, s.refusal, s.actions, nonce, False, sent.attempts)
 
     # writes
     def batch(self, actions: Sequence[Action], nonce: Optional[int] = None, max_actions: int = BATCH_MAX) -> Submitted:
@@ -428,13 +478,13 @@ class MarketMaker:
         if not 1 <= len(actions) <= max_actions:
             raise MMError(f"a batch holds 1 to {max_actions} actions, not {len(actions)}")
         actions = self.on_steps(actions)
-        n = nonce if nonce is not None else self.nonce()
+        n = nonce if nonce is not None else self._fresh()
         sig = self._sig(batch_struct_hash(self.owner, n, actions))
         return self._send("/order/batch-signed", batch_body(self.owner, n, actions, sig), n)
 
     def cancel_all(self, pair_id: int = 0, nonce: Optional[int] = None) -> Submitted:
         """Cancel every open order on ``pair_id`` (0 = every pair)."""
-        n = nonce if nonce is not None else self.nonce()
+        n = nonce if nonce is not None else self._fresh()
         sig = self._sig(cancel_all_struct_hash(self.owner, pair_id, n))
         return self._send("/order/cancel-all", cancel_all_body(self.owner, pair_id, n, sig), n)
 
@@ -459,7 +509,7 @@ class MarketMaker:
         new_price_8dec = units.snap_price_8dec(new_price_8dec, spec, side)
         new_size_18dec = units.snap_size_18dec(new_size_18dec, spec)
         units.check_notional(new_size_18dec, new_price_8dec, spec)
-        n = client_nonce if client_nonce is not None else self.nonce()
+        n = client_nonce if client_nonce is not None else self._fresh()
         sig = self._sig(modify_v2_struct_hash(self.owner, order_id, new_price_8dec, new_size_18dec, n))
         return self._send("/order/modify", modify_body(self.owner, order_id, new_price_8dec, new_size_18dec, n, sig), n)
 

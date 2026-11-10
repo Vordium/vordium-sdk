@@ -10,13 +10,12 @@ pip install vordium
 
 ## Why this SDK is safe to point at a live chain
 
-- **The network is discovered, never hardcoded.** chainId, RPC, explorer and the
-  Arbitrum bridge are resolved at runtime from the canonical spec and the node's
-  `/status`. Nothing is baked in, so the SDK always signs for the chain it is
-  talking to.
-- **The signing chainId is resolved by agreement.** `eth_chainId`, the spec, and
-  any pin you set must all agree, or the SDK refuses to sign — a mismatched
-  signing domain would otherwise yield a valid signature on another chain.
+- **Each named network is pinned.** The SDK carries the chain id and genesis sha256 of `mainnet` and `testnet`
+  (`vordium.PINS`) and builds every signing domain from that pin. Before anything is signed, `eth_chainId`, the network
+  spec and the node's `/status` must all report the pinned values; when one differs, reads still work (with a
+  `PinWarning`) but nothing is signed (`PinMismatch`, naming the network, the expected and the reported values). A new
+  genesis for a named network needs a new SDK release.
+- **Transport is discovered.** RPC, explorer and the Arbitrum bridge are resolved at runtime from the network spec.
 - **The deposit bridge is an allow-list of one.** The SDK accepts only the bridge address the live network spec
   names at the moment you ask, and refuses every other address — and every address when the spec cannot be read.
 - **EIP-712 domains are genesis-bound.** The VordCore domain salt is derived from
@@ -46,8 +45,22 @@ dex = Vordex()                           # testnet's API base https://testnet.vo
 ```
 
 `use_network("testnet")` (or `VORDIUM_NETWORK=testnet`) reads the test network's own spec, asks its JSON-RPC
-endpoint for the chain id and its node for the genesis, and refuses unless they agree. The main network stays the
-default (https://rpc.vordium.com). An address you pass yourself -- `rpc_url=` or `VORDIUM_RPC_URL` -- still wins.
+endpoint for the chain id and its node for the genesis, and signs only when they equal the test network's pin. The main
+network stays the default (https://rpc.vordium.com).
+
+An address you pass yourself -- `rpc_url=` or `VORDIUM_RPC_URL` -- is used for transport, and must say which network it
+serves:
+
+```python
+from vordium import Pin, resolve_network, set_network
+
+set_network(resolve_network(rpc_url="https://node.example", network="mainnet"))   # held to the mainnet pin
+set_network(resolve_network(rpc_url="https://node.example",                     # a network of your own
+                            pin=Pin(chain_id=777001, genesis_sha256="<64 hex>")))
+```
+
+`VORDIUM_NETWORK`, or both `VORDIUM_CHAIN_ID` and `VORDIUM_GENESIS_SHA256`, do the same from the environment. An address
+with no pin can be read, but nothing is signed for it (`UnpinnedNetwork`).
 
 ## Agents
 
@@ -192,9 +205,11 @@ for kind, msg in feed.events():         # snapshot, update, resubscribed (after 
     ...
 ```
 
-Every write is signed for the network of the node it is sent to (its chain id and genesis, read from its `/status`).
-If you configure a network -- `network=` on the client, `set_network()`, or `VORDIUM_CHAIN_ID` /
-`VORDIUM_GENESIS_SHA256` -- and the node serves another, nothing is signed and `NetworkMismatch` is raised.
+Every write is signed under a pin, and the node it is sent to must report that pin's chain id and genesis (its
+`/status`). The pin is the one of `network=` on the client (a resolved network, `"mainnet"`, `"testnet"` or a `Pin`),
+else of `set_network()`, else of `VORDIUM_NETWORK` or `VORDIUM_CHAIN_ID` + `VORDIUM_GENESIS_SHA256`, else of the named
+network whose address the client posts to. When the node serves another network, nothing is signed and `PinMismatch`
+(a `NetworkMismatch`) is raised; a node at another address with no pin raises `UnpinnedNetwork`.
 
 A 202 answer means the request was accepted for the next block; read the result from your orders, fills or the feeds.
 Prices are 8-decimal integers, sizes 18-decimal integers and USDC amounts 6-decimal integers.
@@ -250,7 +265,7 @@ MIT
 
 ## Genesis-bound EIP-712 domains (mainnet genesis `2c1c0679…`)
 Every Vordium signing domain binds its `salt` to the chain's genesis sha256, so a signature made for
-one genesis never verifies on another chain with the same chainId. `vordium.domains` derives the
-domains from the live node (`/status.genesis_sha256`) and never pins them; at the current mainnet
-genesis the two used for trading are VordCore `0x68b86fee…` and VordexSession `0x519818aa…`
-(`vordium.domains.verify_against_node()` re-derives and compares at runtime).
+one genesis never verifies on another chain with the same chainId. The SDK builds the domains from the network's pin
+(`vordium.PINS`) once the node's `/status.genesis_sha256` equals it; at the mainnet genesis the two used for trading are
+VordCore `0x68b86fee…` and VordexSession `0x519818aa…` (`vordium.domains.verify_against_node()` derives them from a live
+node to compare).
