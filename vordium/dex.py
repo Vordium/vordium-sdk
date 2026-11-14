@@ -386,6 +386,8 @@ class Vordex:
         trigger_dir: int = 0,
         client_nonce: Optional[int] = None,
         retries: int = 3,
+        builder: Optional[Dict[str, Any]] = None,
+        worst_price: Any = None,
     ) -> Dict[str, Any]:
         """Sign and submit an order.
 
@@ -416,6 +418,18 @@ class Vordex:
         ``order_type`` is MARKET or LIMIT; stop orders are
         not available, and ``trigger_price`` / ``trigger_dir`` must stay 0
         (:class:`OrderNotAvailable` otherwise, before anything is signed).
+
+        ``builder`` (``{"address": "0x…", "fee_cbps": 500}``) adds a builder fee to the order: it is then signed as
+        PlaceOrderV3 with a 65-byte signature and an approval deadline 120 s ahead. Fees are in cbps (1,000 cbps = 0.1 %).
+        Before anything is signed the network's builder reads are checked: builder fees active, the fee above 0 and at
+        most the perps cap (``caps_cbps``), the builder approved by ``owner`` at or above the fee, the builder's account value enough,
+        and the builder not ``owner`` itself (:class:`vordium.builder.BuilderError` with the network's code otherwise).
+        Without ``builder`` the order is signed exactly as before.
+
+        ``worst_price`` (a MARKET order with ``builder`` only) is the worst price the order may fill at: put on the
+        market's price step so it is never worse than given (a buy's rounds down, a sell's up), then signed as both the
+        slippage cap (``price``) and ``worstPrice8dec``. The network refuses the order (``slippage`` /
+        ``worst_price``) when the market is already past it. Without it a builder market order has no price limit.
         """
         from .mm import nonce_clock
         from . import nonces
@@ -430,19 +444,31 @@ class Vordex:
         trigger8 = 0                                    # stop orders are refused above: no trigger is ever signed
         leverage_bps = units.leverage_bps(leverage)
 
+        if worst_price is not None and (builder is None or order_type != MARKET):
+            raise ValueError("worst_price applies to a market order that names a builder")
+        checked = self._builder_checked(owner, builder) if builder is not None else None
+        worst8 = units.price_8dec(worst_price, spec, side) if worst_price is not None else 0
+
         # The signed value and the POST body MUST carry identical values -- the engine rebuilds the digest from the body.
         nonce = int(client_nonce) if client_nonce is not None else nonces.fresh(nonce_clock(owner), 0, getattr(self, "_chain", None))
-        digest = self._digest(place_order_struct_hash(
-            owner, pair_id, side, size18, price8, leverage_bps,
-            order_type, reduce_only, nonce, post_only, trigger8, trigger_dir,
-        ))
-        signature = _sign_digest(session_key, digest)
-        from eth_account import Account
+        if checked is not None:
+            from . import builder as _b
+            s = _b.place_order_v3(session_key, owner, pair_id, side, size18, price8, leverage_bps, order_type, nonce,
+                                  _b.deadline(None, self._now_s()), checked[0], checked[1], self.domain.separator(),
+                                  reduce_only=reduce_only, post_only=post_only, worst_price_8dec=worst8)
+            body = s.body
+        else:
+            digest = self._digest(place_order_struct_hash(
+                owner, pair_id, side, size18, price8, leverage_bps,
+                order_type, reduce_only, nonce, post_only, trigger8, trigger_dir,
+            ))
+            signature = _sign_digest(session_key, digest)
+            from eth_account import Account
 
-        body = place_order_body(
-            owner, Account.from_key(session_key).address, pair_id, side, size18, price8, leverage_bps,
-            order_type, reduce_only, post_only, trigger8, trigger_dir, nonce, signature,
-        )
+            body = place_order_body(
+                owner, Account.from_key(session_key).address, pair_id, side, size18, price8, leverage_bps,
+                order_type, reduce_only, post_only, trigger8, trigger_dir, nonce, signature,
+            )
         signed = {"pair_id": int(pair_id), "side": int(side), "size_18dec": int(size18),
                   "price_8dec": int(price8) if order_type in PRICED else None}
         rewound = getattr(nonce_clock(owner), "rewound_before", lambda n: None)(nonce)
@@ -479,7 +505,55 @@ class Vordex:
         out: Dict[str, Any] = dict(sent.answer) if isinstance(sent.answer, dict) else {"answer": sent.answer}
         out.setdefault("status_code", sent.status_code)
         out["clientNonce"], out["attempts"] = nonce, sent.attempts
+        if checked is not None:
+            out["builder"] = {"address": checked[0], "fee_cbps": checked[1]}
         return out
+
+    def _now_s(self) -> Optional[int]:
+        """The network's block time in unix seconds (None: this computer's clock is used)."""
+        try:
+            ms = self._chain() if getattr(self, "_chain", None) is not None else None
+        except Exception:
+            ms = None
+        return ms // 1000 if isinstance(ms, int) and ms > 0 else None
+
+    def _builder_checked(self, owner: str, builder: Any):
+        """(address, fee cbps) of an order's builder after the network's builder reads allow it; raises
+        :class:`vordium.builder.BuilderError` before anything is signed otherwise."""
+        from . import builder as _b
+        addr, fee = _b.parse_builder(builder)
+        try:
+            approvals = self._get(f"/builder/approvals/{owner}")
+            stats = self._get(f"/builder/stats/{addr}")
+        except Exception:
+            raise _b.BuilderNotActive("The network did not answer its builder reads, so the builder fee cannot be "
+                                      "checked and nothing was signed. Try again, or send the order without a "
+                                      "builder.") from None
+        _b.require_active(approvals)
+        _b.require_active(stats)
+        _b.check_fee(fee, "perps", _b.caps_from(stats))
+        _b.check_order_builder(owner, addr, fee, approvals, stats)
+        return addr, fee
+
+    def builder_approvals(self, user: str) -> Dict[str, Any]:
+        """``GET /builder/approvals/<user>``: the builders ``user`` approved (``approvals`` [{builder, max_fee_cbps}]),
+        ``count``, ``max``, ``nonce`` and ``active`` (builder fees active)."""
+        return self._get(f"/builder/approvals/{user}")
+
+    def builder_stats(self, builder: str) -> Dict[str, Any]:
+        """``GET /builder/stats/<builder>``: volume, fees (= unclaimed + claimed), users in 30 days, whether its account
+        value is enough, the caps in cbps, its claim nonce and ``active``."""
+        return self._get(f"/builder/stats/{builder}")
+
+    def referral_stats(self, address: str) -> Dict[str, Any]:
+        """``GET /referral/stats/<address>``; with referral levels in force it carries ``level``, ``share_bps``,
+        ``discount_bps``, ``l2_progress``, ``next_check_ms``, ``own_volume_6dec``, ``meets_min``, ``limits`` and more
+        (:func:`vordium.builder.referral_level` reads them)."""
+        return self._get(f"/referral/stats/{address}")
+
+    def referral_tiers(self) -> Dict[str, Any]:
+        """``GET /referral/tiers``: the referral levels table and its rules."""
+        return self._get("/referral/tiers")
 
     def _post_once(self, path: str, body: Dict[str, Any]):
         """One attempt: (status, answer, Retry-After)."""

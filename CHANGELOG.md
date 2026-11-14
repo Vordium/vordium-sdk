@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.6.0
+- Builder codes. `BuilderOps` (signed with the account's own key): `approve_builder_fee(builder, max_fee_cbps)`,
+  `revoke_builder_fee(builder)` (an approval of 0), `claim_builder_fees()` for a builder, and the reads `approvals()`,
+  `stats()`, `referral_stats()`, `referral_level()` and `referral_tiers()`. `Vordex` gains `builder_approvals()`,
+  `builder_stats()`, `referral_stats()` and `referral_tiers()`.
+- `Vordex.place_order(..., builder={"address": ..., "fee_cbps": ...})` signs the order as `PlaceOrderV3` with the
+  builder and its fee. A market order with a builder takes `worst_price` (on the price step, never worse than given),
+  signed as both the slippage cap and the worst price. Without `builder` an order is signed exactly as before.
+- Fees are in cbps (1,000 cbps = 0.1 %). Before signing, the SDK checks the network's builder reads: the rule is active
+  (`active`), the fee is above 0 and within the market's cap (`caps_cbps`), the builder is approved at or above the
+  fee, its account value is enough (`account_value_ok`, `min_account_value_6dec`), and it is not the trader. A
+  refusal raises `BuilderError` with the network's code and what to do; `BuilderNotActive` when builder fees are not
+  active. Nothing is signed then.
+- `vordium.builder` holds the type strings, typehashes, digests and request bodies (`ApproveBuilderFee`,
+  `ClaimBuilderFees`, `PlaceOrderV3`), checked against the network's published vectors in the tests.
+- `referral_level()` returns the level fields (`level`, `share_bps`, `discount_bps`, `l2_progress`, `next_check_ms`,
+  `own_volume_6dec`, `min_own_volume_6dec`, `meets_min`, `limits`, `referee_volume_6dec`), or None where the network
+  does not show levels.
+
 ## 1.4.10
 - Each named network carries its pin in the SDK: `mainnet` chain 101101, genesis
   `2c1c0679fa6ab8358f1d3e8d294a8d1c73ac2e2caf9079f1216abedc3d9fdf4f`; `testnet` chain 101102, genesis

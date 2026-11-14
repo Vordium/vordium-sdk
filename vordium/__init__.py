@@ -81,7 +81,11 @@ from .nonces import NonceAllocator, ClockOutOfWindow, DeliveryUnknown, ChainCloc
 from . import units
 from .units import OrderValueError, SpecsUnavailable, NO_RULES
 
-__version__ = "1.4.10"
+# Builder codes: approve a builder's fee, orders that name a builder, claims; referral levels.
+from . import builder
+from .builder import BuilderOps, BuilderError, BuilderNotActive, ReferralLevel, referral_level
+
+__version__ = "1.6.0"
 __author__ = "Vordium"
 __all__ = [
     "Agent", "Wallet", "KeyFileError", "Chain", "Vordex",
@@ -116,4 +120,6 @@ __all__ = [
     "units", "OrderValueError", "SpecsUnavailable", "NO_RULES",
     # nonces and resends
     "nonces", "NonceAllocator", "ClockOutOfWindow", "DeliveryUnknown", "ChainClock",
+    # builder codes and referral levels
+    "builder", "BuilderOps", "BuilderError", "BuilderNotActive", "ReferralLevel", "referral_level",
 ]

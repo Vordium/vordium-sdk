@@ -1,0 +1,148 @@
+{
+ "_note": "Builder fee shapes and EIP-712 vectors published with the network's builder fee release. The digests are in the VordCore domain of chain 101101 (separator 0x68b86feeb9a9d9d471c3355da4719f2ce6a2330fbde6dad54d815783dacab34b). Values are examples; field names, types and null rules are exact.",
+ "builder_approvals": {
+  "user": "0x1111111111111111111111111111111111111111",
+  "approvals": [
+   {
+    "builder": "0x2222222222222222222222222222222222222222",
+    "max_fee_cbps": 500
+   }
+  ],
+  "count": 1,
+  "max": 10,
+  "nonce": 7,
+  "active": true,
+  "source": "committed_state",
+  "head_height": 240000123
+ },
+ "builder_stats": {
+  "builder": "0x2222222222222222222222222222222222222222",
+  "volume_6dec": "150000000000",
+  "fees_6dec": "75000000",
+  "unclaimed_6dec": "50000000",
+  "claimed_6dec": "25000000",
+  "users_30d": 3,
+  "account_value_ok": true,
+  "min_account_value_6dec": "100000000",
+  "claim_nonce": 2,
+  "caps_cbps": {
+   "perps": 1000,
+   "spot": 5000
+  },
+  "active": true,
+  "source": "committed_state",
+  "head_height": 240000123
+ },
+ "fill_record_builder_key": {
+  "_rule": "key `builder` exists on a perps `fill` record ONLY when a builder fee was charged on that fill; absent otherwise. taker_builder / maker_builder are null when that side paid none; fees are strings, \"0\" for a side that paid none.",
+  "builder": {
+   "taker_builder": "0x2222222222222222222222222222222222222222",
+   "taker_fee_6dec": "4000",
+   "maker_builder": null,
+   "maker_fee_6dec": "0"
+  }
+ },
+ "referral_stats_added_fields": {
+  "level": "L1",
+  "share_bps": 1000,
+  "discount_bps": 400,
+  "l2_progress": {
+   "period_start_ms": 1793145600000,
+   "period_end_ms": 1795737600000,
+   "referred_volume_6dec": "1250000000000",
+   "target_volume_6dec": "5000000000000",
+   "active_referees": 4,
+   "target_active": 10,
+   "grace": false
+  },
+  "next_check_ms": 1795737600000,
+  "own_volume_6dec": "12000000000",
+  "min_own_volume_6dec": "10000000000",
+  "meets_min": true,
+  "limits": {
+   "referee_cut_cap_6dec": "1000000000000000",
+   "referee_discount_cap_6dec": "25000000000000"
+  },
+  "referee_volume_6dec": "0"
+ },
+ "referral_tiers": {
+  "levels": [
+   {
+    "level": "L1",
+    "fee_share_bps": 1000,
+    "referee_discount_bps": 400,
+    "how": "default",
+    "agents_max": null
+   },
+   {
+    "level": "L2",
+    "fee_share_bps": 1500,
+    "referee_discount_bps": 500,
+    "how": "period_check",
+    "agents_max": null
+   },
+   {
+    "level": "PARTNER",
+    "fee_share_bps": 2500,
+    "referee_discount_bps": 1000,
+    "how": "owner_set",
+    "agents_max": null
+   }
+  ],
+  "l2_rule": {
+   "check": "last 30-day period",
+   "period_ms": 2592000000,
+   "period_epoch_ms": 1767225600000,
+   "referred_volume_6dec": "5000000000000",
+   "active_referees": 10,
+   "active_referee_paid_fees_6dec": "10000000",
+   "grace_periods": 1
+  },
+  "partner_bounds": {
+   "max_share_bps": 2500,
+   "max_discount_bps": 1000,
+   "max_sum_bps": 3500
+  },
+  "referrer_min_own_volume_6dec": "10000000000",
+  "referee_caps": {
+   "cut_cap_6dec": "1000000000000000",
+   "discount_cap_6dec": "25000000000000"
+  },
+  "fee_share_of": "the trading fee the referred account actually pays, after its discount (the protocol funds both)",
+  "discount_applies_to": "taker",
+  "maker_fee_charged": false,
+  "agents_limits_active": false,
+  "source": "committed_state",
+  "head_height": 240000123
+ },
+ "reserves_identity_bucket": {
+  "unclaimed_builder_fees_6dec": "50000000"
+ },
+ "eip712_vectors": {
+  "domain_separator": "0x68b86feeb9a9d9d471c3355da4719f2ce6a2330fbde6dad54d815783dacab34b",
+  "approve_builder_fee": {
+   "type": "ApproveBuilderFee(address user,address builder,uint32 maxFeeCbps,uint64 nonce,uint64 validUntil)",
+   "args": {
+    "user": "0x1111111111111111111111111111111111111111",
+    "builder": "0x2222222222222222222222222222222222222222",
+    "maxFeeCbps": 500,
+    "nonce": 7,
+    "validUntil": 1794362362
+   },
+   "digest": "0xfce5a2b124d638dc9ef117b042b188f21c2dfa2ea6919e18eb6c8ffa341cb83b"
+  },
+  "claim_builder_fees": {
+   "type": "ClaimBuilderFees(address builder,uint64 nonce,uint64 validUntil)",
+   "args": {
+    "builder": "0x2222222222222222222222222222222222222222",
+    "nonce": 3,
+    "validUntil": 1794362362
+   },
+   "digest": "0x93794db6cffae3defef2487df0966cd4c5ef03e3ede269465d466c357cd29d63"
+  },
+  "place_order_v3": {
+   "type": "PlaceOrderV3(<the 17 PlaceOrderV2 fields>,address builder,uint32 builderFeeCbps)",
+   "digest": "0xb181323db80755c7af6f44d19aa978bd4216dd54392c33cc48939f2122dd50b7"
+  }
+ }
+}

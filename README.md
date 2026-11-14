@@ -214,6 +214,53 @@ network whose address the client posts to. When the node serves another network,
 A 202 answer means the request was accepted for the next block; read the result from your orders, fills or the feeds.
 Prices are 8-decimal integers, sizes 18-decimal integers and USDC amounts 6-decimal integers.
 
+## Builder codes
+
+An app or bot that sends orders for traders (a *builder*) can add its own fee to those orders, up to what each trader
+approved. Fees are in cbps, hundredths of a basis point: 1,000 cbps = 0.1 %, 500 cbps = 5 bps = 0.05 %. The network
+publishes its limits in its reads: the fee cap per market kind (`caps_cbps` in `stats()`), the most builders an account
+may approve (`max` in `approvals()`), and the account value a builder needs for orders that name it to be accepted
+(`min_account_value_6dec`, with `account_value_ok`).
+
+```python
+from vordium import BuilderOps, Vordex
+
+trader = BuilderOps(trader_key)                     # signed with the account's own key
+trader.approve_builder_fee(builder_address, 500)    # let the builder charge up to 5 bps
+trader.approvals()                                  # {"approvals": [{"builder", "max_fee_cbps"}], "count", "max", "active", ...}
+
+dex = Vordex()
+dex.place_order(key, trader.owner, 1, 0, "0.01", "1700", order_type=1,
+                builder={"address": builder_address, "fee_cbps": 500})
+dex.place_order(key, trader.owner, 1, 0, "0.01", None, order_type=0,      # a market order with a worst price
+                builder={"address": builder_address, "fee_cbps": 500}, worst_price="1950")
+
+trader.revoke_builder_fee(builder_address)          # an approval of 0
+
+me = BuilderOps(builder_key)                        # as the builder
+me.stats()                                          # volume, fees = unclaimed + claimed, users in 30 days, caps
+me.claim_builder_fees()                             # move unclaimed fees to the builder's balance
+```
+
+Before anything is signed the SDK reads the network: builder fees must be active (`active` in the builder reads),
+the fee above 0 and within the cap (`caps_cbps`), the builder approved at or above the fee, its account value enough, and the builder
+not the trader. Otherwise `BuilderError` is raised with the network's code (for example `builder_fee_above_cap`,
+`builder_not_approved`, `builder_too_small`) and a sentence saying what to do; `BuilderNotActive` when builder fees are
+not active. An order without `builder` is signed exactly as before. An order with one is signed as `PlaceOrderV3`
+(65-byte signature, a deadline 120 seconds ahead). A market order with a builder takes `worst_price`: it is put on
+the market's price step so it is never worse than given (a buy's rounds down, a sell's up) and signed as both the
+slippage cap and the worst price; the network refuses the order (`slippage`, `worst_price`) when the market is already
+past it. Without `worst_price` a builder market order has no price limit. Writes return a `Result` whose `applied` is true only once the
+chain's own read shows the change.
+
+The fee a fill charged is in that fill's record, under its `builder` key (`taker_builder`, `taker_fee_6dec`,
+`maker_builder`, `maker_fee_6dec`; the key is absent when no builder fee was charged), and the builder's totals in its
+stats read.
+
+`trader.referral_level()` reads the account's referral level (`L1`, `L2` or `PARTNER`), its fee share and its
+referees' discount, its progress in the current 30-day period toward L2, and whether its own volume meets the referrer
+minimum; `trader.referral_tiers()` reads the table and its rules.
+
 ## CLI
 
 ```bash
