@@ -82,14 +82,15 @@ class BuilderNotActive(BuilderError):
 
 # -- pure checks ---------------------------------------------------------------------------------------------------------
 def _addr(value: Any, what: str) -> str:
+    from ._strict import address
     try:
-        return to_checksum_address(str(value))
+        return address(value, what)
     except Exception:
         raise BuilderError("invalid_body", f"{what} must be an address (0x and 40 hex characters).") from None
 
 
 def _uint(value: Any, bits: int, what: str) -> int:
-    v = int(value) if isinstance(value, str) and value.strip().isdigit() else value
+    v = int(value) if isinstance(value, str) and value.strip().isascii() and value.strip().isdigit() else value
     if isinstance(v, bool) or not isinstance(v, int) or v < 0 or v >= 1 << bits:
         raise BuilderError("invalid_body", f"{what} must be a whole number from 0 to {(1 << bits) - 1}.")
     return v
@@ -194,7 +195,7 @@ def check_order_builder(owner: str, builder: str, fee_cbps: int, approvals: Any,
                            "the account approved: use a lower fee, or approve a higher one.")
     if isinstance(stats, Mapping) and stats.get("account_value_ok") is False:
         need = stats.get("min_account_value_6dec")
-        floor = (f"the {_usdc(int(need))} USDC minimum" if isinstance(need, str) and need.isdigit()
+        floor = (f"the {_usdc(int(need))} USDC minimum" if isinstance(need, str) and need.isascii() and need.isdigit()
                  else "the network's minimum account value")
         raise BuilderError("builder_too_small", f"The builder's account value is below {floor}, so the network "
                            "refuses orders that name it. The builder must fund its account first.")
@@ -233,7 +234,8 @@ def _word(kind: str, value: Any) -> bytes:
         return (1 if value is True else 0).to_bytes(32, "big")
     if kind == "string":
         return keccak(str(value).encode())
-    return int(value).to_bytes(32, "big")
+    from ._strict import whole
+    return whole(value, "a whole-number field").to_bytes(32, "big")
 
 
 def struct_hash(primary_type: str, message: Mapping[str, Any]) -> bytes:
@@ -500,7 +502,7 @@ class BuilderOps(AccountOps):
         st = self.stats()
         require_active(st)
         unclaimed = st.get("unclaimed_6dec")
-        if not (isinstance(unclaimed, str) and unclaimed.isdigit() and int(unclaimed) > 0):
+        if not (isinstance(unclaimed, str) and unclaimed.isascii() and unclaimed.isdigit() and int(unclaimed) > 0):
             raise BuilderError("builder_nothing_to_claim", "There are no builder fees to claim; nothing was signed.")
         before = int(st.get("claim_nonce") or 0)
         s = claim_builder_fees(self.key, self.owner, before + 1, deadline(None, self._now_s()),

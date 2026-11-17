@@ -142,7 +142,8 @@ class Wallet:
         if self._w3 is None:
             from web3 import Web3
             from .network import get_network
-            self._w3 = Web3(Web3.HTTPProvider(get_network().rpc_url))
+            from . import _http
+            self._w3 = Web3(_http.web3_provider(get_network().rpc_url))
         raw = self._w3.eth.get_balance(self.address)
         return float(self._w3.from_wei(raw, 'ether'))
 

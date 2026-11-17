@@ -285,7 +285,7 @@ def test_next_mmp_nonce():
 
 
 def test_pair_specs_tick_and_lot():
-    read = {"specs": {"pairs": [
+    read = {"specs": {"min_order_notional_6dec": "10000000", "pairs": [
         {"pair": {"pair_id": 1, "symbol": "ETHUSDT"}, "tick_8dec": "0", "lot_18dec": "0", "liquidation_fee_bps": 40,
          "maintenance_margin_bps": 200},
         {"pair": {"pair_id": 2, "symbol": "BTCUSDT"}, "tick_8dec": "100000", "lot_18dec": "1000000000000000"}]}}
@@ -294,3 +294,11 @@ def test_pair_specs_tick_and_lot():
     assert mm.on_tick(123, s[1]) and mm.on_lot(7, s[1])
     assert mm.on_tick(200000, s[2]) and not mm.on_tick(150000, s[2])
     assert mm.on_lot(2 * 10**15, s[2]) and not mm.on_lot(10**15 + 1, s[2])
+
+
+def test_rules_without_the_smallest_order_value_are_refused():
+    """A rules read that lists markets but not min_order_notional_6dec is trimmed or out of date: refused, never read
+    as 'no minimum'."""
+    from vordium import units
+    with pytest.raises(units.SpecsUnavailable):
+        mm.pair_specs({"specs": {"pairs": [{"pair": {"pair_id": 1}, "tick_8dec": "1", "lot_18dec": "1"}]}})

@@ -189,17 +189,27 @@ class CandidateOrder:
 
 
 def _addr_bytes(addr: str) -> bytes:
-    """Normalize a 0x-hex address to its raw 20 bytes."""
-    h = addr[2:] if addr.startswith(("0x", "0X")) else addr
-    b = bytes.fromhex(h)
+    """Normalize a 0x-hex address to its raw 20 bytes (a mixed-case address must carry its right checksum)."""
+    from ._strict import address
+    b = bytes.fromhex(address(addr, "owner")[2:])
     if len(b) != 20:
         raise ValueError(f"owner must be a 20-byte address, got {len(b)} bytes")
     return b
 
 
+def _uN(value: int, bits: int, name: str) -> bytes:
+    """ABI-encode an unsigned integer of ``bits`` bits: refused (never wrapped) when it does not fit the field."""
+    from ._strict import whole
+    v = whole(value, name)
+    if v < 0 or v >= 1 << bits:
+        raise ValueError(f"{name} must fit an unsigned {bits}-bit integer")
+    return v.to_bytes(32, "big")
+
+
 def _u256(value: int) -> bytes:
     """ABI-encode an unsigned integer as a 32-byte big-endian word."""
-    v = int(value)
+    from ._strict import whole
+    v = whole(value, "an EIP-712 uint field")
     if v < 0:
         raise ValueError("EIP-712 uint field cannot be negative")
     return v.to_bytes(32, "big")
@@ -289,17 +299,17 @@ def place_order_struct_hash(
     return keccak(
         _PLACE_ORDER_TYPEHASH
         + _addr32(owner)
-        + _u256(pair_id)
-        + _u256(side)
-        + _u256(size)
-        + _u256(price)
-        + _u256(leverage_bps)
-        + _u256(order_type)
+        + _uN(pair_id, 32, "pair_id")
+        + _uN(side, 8, "side")
+        + _uN(size, 128, "size")
+        + _uN(price, 64, "price")
+        + _uN(leverage_bps, 32, "leverage_bps")
+        + _uN(order_type, 8, "order_type")
         + _u256(1 if reduce_only else 0)
         + _u256(1 if post_only else 0)
-        + _u256(trigger_price_8dec)
-        + _u256(trigger_dir)
-        + _u256(client_nonce)
+        + _uN(trigger_price_8dec, 64, "trigger_price_8dec")
+        + _uN(trigger_dir, 8, "trigger_dir")
+        + _uN(client_nonce, 64, "client_nonce")
     )
 
 
@@ -338,7 +348,7 @@ def place_order_digest(
 
 def cancel_order_struct_hash(owner: str, order_id: int) -> bytes:
     """hashStruct(CancelOrder)."""
-    return keccak(_CANCEL_ORDER_TYPEHASH + _addr32(owner) + _u256(order_id))
+    return keccak(_CANCEL_ORDER_TYPEHASH + _addr32(owner) + _uN(order_id, 64, "order_id"))
 
 
 def cancel_order_digest(owner: str, order_id: int) -> bytes:
@@ -350,7 +360,8 @@ _U64_MAX = (1 << 64) - 1
 
 
 def _u64(name: str, value: int) -> int:
-    v = int(value)
+    from ._strict import whole
+    v = whole(value, name)
     if v < 0 or v > _U64_MAX:
         raise ValueError(f"{name} must fit an unsigned 64-bit integer")
     return v
@@ -374,9 +385,9 @@ def modify_order_struct_hash(
     return keccak(
         _MODIFY_ORDER_TYPEHASH
         + _addr32(owner)
-        + _u256(order_id)
-        + _u256(new_price)
-        + _u256(new_size)
+        + _uN(order_id, 64, "order_id")
+        + _uN(new_price, 64, "new_price")
+        + _uN(new_size, 128, "new_size")
     )
 
 
@@ -405,10 +416,10 @@ def set_tpsl_struct_hash(
     return keccak(
         _SET_TPSL_TYPEHASH
         + _addr32(owner)
-        + _u256(pair_id)
-        + _u256(position_id)
-        + _u256(take_profit_8dec)
-        + _u256(stop_loss_8dec)
+        + _uN(pair_id, 32, "pair_id")
+        + _uN(position_id, 64, "position_id")
+        + _uN(take_profit_8dec, 64, "take_profit_8dec")
+        + _uN(stop_loss_8dec, 64, "stop_loss_8dec")
     )
 
 
@@ -443,10 +454,10 @@ def set_agent_caps_struct_hash(
     return keccak(
         _SET_AGENT_CAPS_TYPEHASH
         + _addr32(owner)
-        + _u256(max_leverage)
-        + _u256(allowed_order_types)
-        + _u256(max_input_per_trade)
-        + _u256(max_total_position)
+        + _uN(max_leverage, 64, "max_leverage")
+        + _uN(allowed_order_types, 32, "allowed_order_types")
+        + _uN(max_input_per_trade, 128, "max_input_per_trade")
+        + _uN(max_total_position, 128, "max_total_position")
     )
 
 
@@ -471,7 +482,7 @@ def set_agent_caps_digest(
 
 def set_agent_mode_struct_hash(owner: str, mode: int) -> bytes:
     """hashStruct(SetAgentMode)."""
-    return keccak(_SET_AGENT_MODE_TYPEHASH + _addr32(owner) + _u256(mode))
+    return keccak(_SET_AGENT_MODE_TYPEHASH + _addr32(owner) + _uN(mode, 8, "mode"))
 
 
 def set_agent_mode_digest(owner: str, mode: int) -> bytes:

@@ -740,11 +740,19 @@ def deployments_from_spec(spec: Any) -> Optional[Dict[str, Dict[str, str]]]:
     return {str(cid): {"vault": vault, "handler": handler, "setRules": create_address(vault, VAULT_CREATES["setRules"])}}
 
 
-def fetch_deployments(spec_url: Optional[str] = None, timeout: float = 6.0) -> Optional[Dict[str, Dict[str, str]]]:
-    """``deployments_from_spec`` of the live network spec, read at the moment of the call (never cached)."""
-    from .network import default_spec_url, _fetch_spec
-    url = spec_url or default_spec_url()
-    return deployments_from_spec(_fetch_spec(url, timeout))
+def fetch_deployments(spec_url: Optional[str] = None, timeout: float = 6.0,
+                      expected_bridge: Optional[str] = None) -> Optional[Dict[str, Dict[str, str]]]:
+    """``deployments_from_spec`` of the live network spec, read at the moment of the call (never cached). A spec named
+    only by VORDIUM_SPEC_URL is used only with ``expected_bridge``, and then every deployed vault it names must be that
+    address (:class:`vordium.network.BridgeRefused` otherwise)."""
+    from .network import BridgeRefused, deposit_spec_url, _fetch_spec
+    url = deposit_spec_url(spec_url, expected_bridge)
+    d = deployments_from_spec(_fetch_spec(url, timeout))
+    if d and expected_bridge is not None:
+        want = str(expected_bridge).lower()
+        if any(str(x.get("vault", "")).lower() != want for x in d.values()):
+            raise BridgeRefused("the network spec names another deposit vault than the expected bridge; nothing was built.")
+    return d
 
 
 def deposit_gate(v: Optional[VaultsRead], source_chain_id: Any, deployments: Optional[Dict[str, Dict[str, str]]],
@@ -910,6 +918,12 @@ def build_withdraw_intent(v: VaultsRead, p: WithdrawIntent, next_nonce: int, cha
         return None, LINE_OWN_ADDRESS
     if is_evm_domain(vault, p.destination_domain) and not re.fullmatch(r"0x0{24}[0-9a-fA-F]{40}", p.recipient):
         return None, "The destination address is not valid."
+    if is_evm_domain(vault, p.destination_domain):
+        from ._strict import address
+        try:
+            address("0x" + p.recipient[-40:], "the destination address")
+        except ValueError as e:
+            return None, f"The destination address has a wrong checksum: {e}."
     own = own_addresses(vault)
     if own is None:
         return None, "The bridge contracts could not be confirmed, so nothing was built."
@@ -2105,7 +2119,8 @@ def read_arc_blocked(arc_rpc_url: str, account: str) -> Optional[bool]:
         return None
 
 
-def prepare_arc_deposit(sender: str, amount: int, *, arc_rpc_url: str, wait_confirmed: bool = False) -> Dict[str, Any]:
+def prepare_arc_deposit(sender: str, amount: int, *, arc_rpc_url: str, wait_confirmed: bool = False,
+                        expected_bridge: Optional[str] = None) -> Dict[str, Any]:
     """Every check of an Arc deposit, then its two calls (approve + the Circle-forwarded burn) -- or why nothing was built.
 
     Reads: the deployed contracts (network spec), the vaults (deposits must be open: a fresh read, the deployed vault
@@ -2116,7 +2131,11 @@ def prepare_arc_deposit(sender: str, amount: int, *, arc_rpc_url: str, wait_conf
     _require_open()
     if not _is_addr(sender) or not isinstance(amount, int) or amount <= 0:
         return {"ok": False, "text": "Enter a USDC amount and an address."}
-    deployments = fetch_deployments()
+    from .network import BridgeRefused
+    try:
+        deployments = (fetch_deployments(expected_bridge=expected_bridge) if expected_bridge is not None else fetch_deployments())
+    except BridgeRefused as e:
+        return {"ok": False, "text": str(e)}
     v = deployment_check(fetch_vaults(), deployments)
     if not v.ok:
         return {"ok": False, "text": "The bridge could not be read, so nothing was built."}
@@ -2213,7 +2232,8 @@ def _chain_time_s() -> Optional[int]:
         return None
 
 
-def prepare_withdraw_to_arc(account: str, amount: int, *, arc_rpc_url: str) -> Dict[str, Any]:
+def prepare_withdraw_to_arc(account: str, amount: int, *, arc_rpc_url: str,
+                            expected_bridge: Optional[str] = None) -> Dict[str, Any]:
     """A withdrawal from Vordium to the same address on Arc, checked and ready to sign -- or why nothing was built.
 
     The vault's Circle-forwarded route (standard if open, else fast), Circle's fee from the forwarded quote on what leaves
@@ -2223,7 +2243,12 @@ def prepare_withdraw_to_arc(account: str, amount: int, *, arc_rpc_url: str) -> D
     _require_open()
     if not _is_addr(account) or not isinstance(amount, int) or amount <= 0:
         return {"ok": False, "text": "Enter a USDC amount and an address."}
-    v = deployment_check(fetch_vaults(), fetch_deployments())
+    from .network import BridgeRefused
+    try:
+        deployments = (fetch_deployments(expected_bridge=expected_bridge) if expected_bridge is not None else fetch_deployments())
+    except BridgeRefused as e:
+        return {"ok": False, "text": str(e)}
+    v = deployment_check(fetch_vaults(), deployments)
     if not v.ok:
         return {"ok": False, "text": "The bridge could not be read, so nothing was built."}
     vault = next((x for x in v.vaults if arc_payout_route(x) is not None), None)
@@ -2253,13 +2278,14 @@ def prepare_withdraw_to_arc(account: str, amount: int, *, arc_rpc_url: str) -> D
     return {"ok": True, "intent": intent, "max_fee": max_fee, "receive_at_least": amount - v.withdrawal_fee - max_fee}
 
 
-def withdraw_to_arc(private_key: str, amount: int, *, arc_rpc_url: str) -> Tuple[str, Optional[str], str]:
+def withdraw_to_arc(private_key: str, amount: int, *, arc_rpc_url: str,
+                    expected_bridge: Optional[str] = None) -> Tuple[str, Optional[str], str]:
     """Prepare, sign with YOUR account key, and submit a withdrawal to your own address on Arc. Returns
     ``read_submit_response``'s (outcome, code, message); read the outcome back with /bridge/v4/withdrawal/{account}/{nonce}."""
     _require_open()
     from eth_account import Account
     account = Account.from_key(private_key).address
-    prepared = prepare_withdraw_to_arc(account, amount, arc_rpc_url=arc_rpc_url)
+    prepared = prepare_withdraw_to_arc(account, amount, arc_rpc_url=arc_rpc_url, expected_bridge=expected_bridge)
     if not prepared.get("ok"):
         return "refused", None, prepared.get("text", "")
     return submit_withdrawal(prepared["intent"], sign_withdraw_intent(private_key, prepared["intent"]))

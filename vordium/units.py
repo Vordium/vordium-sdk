@@ -38,7 +38,8 @@ PLACE_PRICE_STEP_8DEC = 100
 
 _U64 = (1 << 64) - 1
 _U128 = (1 << 128) - 1
-_PLAIN = re.compile(r"^(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$")
+# ASCII digits only: Python reads other scripts' digits as numbers ("1\u06605" is 105, and its middle digit looks like a dot)
+_PLAIN = re.compile(r"^(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$", re.ASCII)
 
 
 class OrderValueError(ValueError):
@@ -65,7 +66,7 @@ def decimal_of(x: Any, what: str = "a value") -> Decimal:
     elif isinstance(x, Decimal):
         d = x
     elif isinstance(x, str):
-        if not _PLAIN.match(x):
+        if not x.isascii() or not _PLAIN.match(x):
             raise OrderValueError(f"{what} is not a plain decimal number ({x!r})")
         try:
             d = Decimal(x)

@@ -448,11 +448,25 @@ def _address(v) -> Optional[str]:
     return "0x" + h.lower()
 
 
-def current_bridge(spec_url: Optional[str] = None, timeout: float = 6.0) -> str:
-    """The deposit bridge address, read from the live network spec at the moment of the call (never cached,
-    never from the environment). Raises :class:`BridgeRefused` when the spec cannot be read or names no valid
-    address."""
-    url = spec_url or default_spec_url()
+def deposit_spec_url(spec_url: Optional[str] = None, expected_bridge: Optional[str] = None) -> str:
+    """Where the spec is read for anything that names the deposit bridge or builds a deposit. A spec named only by the
+    environment (VORDIUM_SPEC_URL) is refused for this unless the caller also gives the bridge address it expects
+    (``expected_bridge``), which the spec must then name. Raises :class:`BridgeRefused`."""
+    if spec_url:
+        return spec_url
+    if os.getenv("VORDIUM_SPEC_URL") and not _address(expected_bridge):
+        raise BridgeRefused("VORDIUM_SPEC_URL is set, and a spec named by the environment does not name the deposit "
+                            "bridge on its own. Pass expected_bridge= with the bridge address you have checked, or "
+                            "unset VORDIUM_SPEC_URL. Nothing was built.")
+    return default_spec_url()
+
+
+def current_bridge(spec_url: Optional[str] = None, timeout: float = 6.0, expected_bridge: Optional[str] = None) -> str:
+    """The deposit bridge address, read from the live network spec at the moment of the call (never cached). A spec
+    named only by VORDIUM_SPEC_URL is used only with ``expected_bridge`` (see :func:`deposit_spec_url`), and with
+    ``expected_bridge`` the spec must name exactly that address. Raises :class:`BridgeRefused` when the spec cannot be
+    read, names no valid address, or names another address than the one expected."""
+    url = deposit_spec_url(spec_url, expected_bridge)
     spec = _fetch_spec(url, timeout)
     if not isinstance(spec, dict):
         raise BridgeRefused(f"the network spec could not be read ({url}); the deposit bridge cannot be confirmed, "
@@ -460,6 +474,16 @@ def current_bridge(spec_url: Optional[str] = None, timeout: float = 6.0) -> str:
     addr = _address((spec.get("bridge") or {}).get("address"))
     if not addr:
         raise BridgeRefused("the network spec names no valid deposit bridge address; no address is returned.")
+    want = None
+    if expected_bridge is not None:
+        from ._strict import address as _checked
+        try:
+            want = _checked(expected_bridge, "the expected bridge").lower()
+        except ValueError as e:
+            raise BridgeRefused(f"{e}; nothing should be sent to it.") from None
+    if expected_bridge is not None and addr != want:
+        raise BridgeRefused(f"the network spec names {addr} as the deposit bridge, not the expected {want or expected_bridge!r}; "
+                            "nothing should be sent to it.")
     return addr
 
 
@@ -469,7 +493,7 @@ def require_current_bridge(address: str, spec_url: Optional[str] = None, timeout
     given = _address(address)
     if not given:
         raise BridgeRefused(f"{address!r} is not an address; nothing should be sent to it.")
-    current = current_bridge(spec_url, timeout)
+    current = current_bridge(spec_url, timeout, expected_bridge=given)
     if given != current:
         raise BridgeRefused(f"{given} is not the deposit bridge the network spec names ({current}); "
                             "nothing should be sent to it.")
@@ -545,7 +569,7 @@ def require_message_pin(message: str, net: Optional[Network] = None) -> Pin:
         raise ValueError('an EIP-191 message must carry "Chain: <id>" as line 2')
     problems = []
     c = lines[1][len("Chain: "):].strip()
-    if not c.isdigit() or int(c) != pin.chain_id:
+    if not (c.isascii() and c.isdigit()) or int(c) != pin.chain_id:
         problems.append(f"the message names chain {c}, expected {pin.chain_id}")
     if len(lines) > 2 and lines[2].startswith("Genesis: "):
         g = lines[2][len("Genesis: "):].strip()

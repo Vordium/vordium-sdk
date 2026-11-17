@@ -1,11 +1,13 @@
 from web3 import Web3
+
+from . import _http
 from .network import get_network
 
 
 class Chain:
     def __init__(self):
         self._net = get_network()  # resolve_network() at client init
-        self._w3 = Web3(Web3.HTTPProvider(self._net.rpc_url))
+        self._w3 = Web3(_http.web3_provider(self._net.rpc_url))
 
     @property
     def connected(self) -> bool:

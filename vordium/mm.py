@@ -121,7 +121,7 @@ def refusal(code: Optional[str], error: Any = "", retry_after: Optional[float] =
 def _uint(v: Any, bits_max: int, name: str) -> int:
     if isinstance(v, bool):
         raise MMError(f"{name} is not a number")
-    if isinstance(v, str) and v.isdigit():
+    if isinstance(v, str) and v.isascii() and v.isdigit():
         v = int(v)
     if not isinstance(v, int) or v < 0 or v > bits_max:
         raise MMError(f"{name} is out of range")
@@ -582,7 +582,7 @@ def _count(v: Any) -> int:
         raise MMError("a market rule is not a number")
     if isinstance(v, int) and v >= 0:
         return v
-    if isinstance(v, str) and v.isdigit():
+    if isinstance(v, str) and v.isascii() and v.isdigit():
         return int(v)
     if v is None or v == "":
         return 0
@@ -594,6 +594,12 @@ def pair_specs(specs_read: Dict[str, Any]) -> Dict[int, PairSpec]:
     the network's smallest order value (``min_order_notional_6dec``)."""
     out: Dict[int, PairSpec] = {}
     s = (specs_read or {}).get("specs") or {}
+    if s.get("pairs") and s.get("min_order_notional_6dec") in (None, ""):
+        # a rules read that lists markets but not the smallest order value is trimmed or out of date: refuse it rather
+        # than read the missing value as "no minimum"
+        from .units import SpecsUnavailable
+        raise SpecsUnavailable("the market rules do not name the smallest order value (min_order_notional_6dec); "
+                               "nothing was signed")
     min_notional = _count(s.get("min_order_notional_6dec"))
     for p in s.get("pairs") or []:
         pr = p.get("pair") or {}
@@ -687,7 +693,7 @@ def _int_field(v: Any, name: str, allow_none: bool = False) -> Optional[int]:
         return None
     if isinstance(v, bool):
         raise MMError(f"{name} is not a number")
-    if isinstance(v, str) and v.lstrip("-").isdigit():
+    if isinstance(v, str) and v.isascii() and v.lstrip("-").isdigit():
         return int(v)
     if isinstance(v, int):
         return v

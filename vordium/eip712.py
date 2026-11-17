@@ -67,10 +67,18 @@ def _signable(primary_type: str, value: Dict[str, Any]):
         raise KeyError(
             f"unknown op {primary_type!r}; pinned ops are {sorted(TYPES)}"
         )
+    from . import _strict
+    checked = dict(value)
+    for f in TYPES[primary_type]:
+        n, t = f["name"], f["type"]
+        if n in checked and t == "address":
+            checked[n] = _strict.address(checked[n], n)
+        elif n in checked and t.startswith("uint"):
+            checked[n] = _strict.whole(checked[n], n)
     return encode_typed_data(
         domain_data=domain(),
         message_types={primary_type: TYPES[primary_type]},
-        message_data=value,
+        message_data=checked,
     )
 
 

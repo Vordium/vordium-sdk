@@ -24,7 +24,7 @@ import os
 import re
 from dataclasses import dataclass
 from typing import Any, List, Optional, Union
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 ROLLB_KEY = "aa2007_activation_height"
 #: Heights below H in which nothing is signed.
@@ -151,10 +151,25 @@ def with_genesis_line(lines: List[str], phase: SigningPhase) -> List[str]:
     return [lines[0], lines[1], f"Genesis: {phase.genesis}", *lines[2:]]
 
 
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):     # a redirect is an error here, never followed
+        return None
+
+
+_OPENER = build_opener(_NoRedirect)
+
+
 def _get_json(url: str, timeout: float) -> Any:
     req = Request(url, headers={"User-Agent": "vordium-sdk", "Cache-Control": "no-store"})
-    with urlopen(req, timeout=timeout) as r:  # noqa: S310 - https URLs from the resolved network
-        return json.loads(r.read().decode("utf-8"))
+    from urllib.error import HTTPError
+    try:
+        with _OPENER.open(req, timeout=timeout) as r:  # noqa: S310 - https URLs from the resolved network
+            return json.loads(r.read().decode("utf-8"))
+    except HTTPError as e:
+        if 300 <= e.code < 400:
+            from ._http import REDIRECT_WORDS
+            raise ValueError(f"{REDIRECT_WORDS} ({url} answered {e.code})") from None
+        raise
 
 
 def read_signing_phase(rpc_url: Optional[str] = None, spec_url: Optional[str] = None,

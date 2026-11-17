@@ -3,6 +3,8 @@ import asyncio
 import warnings
 import requests
 from web3 import Web3
+
+from . import _http
 from .network import PinMismatch, get_network, signing_pin
 from .pins import refusal
 from .wallet import Wallet
@@ -24,7 +26,7 @@ class Agent:
 
     def __init__(self, private_key: str = None, key_file: str = None):
         self._net = get_network()  # resolve_network() at client init
-        self._w3 = Web3(Web3.HTTPProvider(self._net.rpc_url))
+        self._w3 = Web3(_http.web3_provider(self._net.rpc_url))
 
         if private_key and key_file:
             raise ValueError("pass private_key or key_file, not both")

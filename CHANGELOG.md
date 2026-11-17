@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.6.1
+- Redirects are never followed. A 3xx answer to a read, a signed write or the signing-phase read raises
+  `RedirectRefused`, is not read as data and is not sent again. Web3 calls (balances, transfers) do not follow
+  redirects either and raise the same `RedirectRefused`.
+- Sizes, prices and leverage take an int, a str, a Decimal or a float (a float is read from its shortest decimal
+  form). Whole-number fields that are signed as they are (ids, nonces, times, and the raw 18- and 8-decimal integers
+  the digest helpers take) take an int, a string of digits or a Decimal with a whole value; a float or a fractional
+  value is refused (`ValueError`). Numbers are read with the digits 0-9 only; digits of other scripts are refused
+  (`OrderValueError` / `ValueError`).
+- Every signed whole number must fit its field (for example a pair id in 32 bits, a client nonce or an order id in 64
+  bits); a value past it is refused before signing.
+- An address is 40 hex characters, with or without 0x. Written in mixed case it must carry its EIP-55 checksum; an
+  all-lower-case or all-upper-case address is taken as written. This applies to owners, session keys, agents, builders, money operations and withdrawal destinations.
+- Market rules that list markets but do not name the smallest order value (`min_order_notional_6dec`) are refused
+  (`SpecsUnavailable`).
+- A network spec named only by `VORDIUM_SPEC_URL` does not name the deposit bridge on its own: `current_bridge()`,
+  `fetch_deployments()`, `prepare_arc_deposit()`, `prepare_withdraw_to_arc()` and `withdraw_to_arc()` refuse it
+  (`BridgeRefused`, or `{"ok": False}`) unless the caller passes `expected_bridge=` with the address it has checked,
+  which the spec must then name.
+
 ## 1.6.0
 - Builder codes. `BuilderOps` (signed with the account's own key): `approve_builder_fee(builder, max_fee_cbps)`,
   `revoke_builder_fee(builder)` (an approval of 0), `claim_builder_fees()` for a builder, and the reads `approvals()`,

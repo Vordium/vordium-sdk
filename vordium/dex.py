@@ -248,7 +248,7 @@ def _num(v: Any) -> Optional[int]:
         return None
     if isinstance(v, int):
         return v
-    if isinstance(v, str) and v.strip().lstrip("-").isdigit():
+    if isinstance(v, str) and v.strip().isascii() and v.strip().lstrip("-").isdigit():
         return int(v.strip())
     return None
 

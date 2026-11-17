@@ -721,3 +721,17 @@ def test_no_vault_change_builders_or_owner_envelopes_in_the_package():
     assert len(_ABSENT) == 13 and len(tokens) > 500      # the scan read the package
     import vordium
     assert "from . import bridge_v4" in Path(vordium.__file__).read_text()      # the release exports the bridge
+
+
+def test_an_evm_recipient_with_a_wrong_checksum_is_refused():
+    """A pasted EVM destination in mixed case must carry its EIP-55 checksum; lower case is taken as written."""
+    v = b.read_vaults(vaults_json())
+    x = next(x for x in V["vectors"] if x["id"] == "WithdrawIntentV4-v3-1")
+    i = intent_of(x)
+    now = i.deadline - 600
+    good = "0x52908400098527886E0F7030069857D2E4169EE7"
+    bad = "0x52908400098527886E0F7030069857D2E4169Ee7"
+    assert b.build_withdraw_intent(v, replace(i, recipient="0x" + "0" * 24 + good[2:]), 1, now)[0] is not None
+    assert b.build_withdraw_intent(v, replace(i, recipient="0x" + "0" * 24 + good[2:].lower()), 1, now)[0] is not None
+    out, why = b.build_withdraw_intent(v, replace(i, recipient="0x" + "0" * 24 + bad[2:]), 1, now)
+    assert out is None and "checksum" in why

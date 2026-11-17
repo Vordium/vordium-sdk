@@ -76,7 +76,7 @@ def _int(v, name: str, allow_none: bool = False) -> Optional[int]:
         return None
     if isinstance(v, bool):
         raise ScheduleCancelError(f"{name} is not a number")
-    if isinstance(v, str) and v.isdigit():
+    if isinstance(v, str) and v.isascii() and v.isdigit():
         v = int(v)
     if not isinstance(v, int) or v < 0 or v > _U64_MAX:
         raise ScheduleCancelError(f"{name} is not an unsigned 64-bit number")

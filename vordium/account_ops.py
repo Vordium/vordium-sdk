@@ -27,6 +27,8 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from eth_abi import encode
 from eth_utils import keccak, to_checksum_address
 
+from . import _strict
+
 from . import domains as _domains
 
 # ── typed structs (the chain's layouts) ─────────────────────────────────────────────────────────────────────────────
@@ -58,7 +60,13 @@ def struct_hash(name: str, fields: Sequence[Tuple[str, str]], value: Dict[str, A
             raise ValueError(f"{name}: {n} is missing")
         v = value[n]
         types.append(t)
-        vals.append(to_checksum_address(v) if t == "address" else bool(v) if t == "bool" else int(v))
+        if t.startswith("uint"):
+            w = _strict.whole(v, n)
+            if w < 0 or w >= 1 << int(t[4:]):
+                raise ValueError(f"{name}: {n} must fit {t}")
+            vals.append(w)
+        else:
+            vals.append(_strict.address(v, n) if t == "address" else bool(v) if t == "bool" else v)
     return keccak(encode(types, vals))
 
 
@@ -162,7 +170,7 @@ def read_twap_rules(spec: Any) -> TwapRules:
         raise ValueError("the network signs CancelTwap in another format than this SDK; nothing is signed")
     def n(src: Any, k: str) -> Optional[int]:
         v = _val(src.get(k)) if isinstance(src, dict) else None
-        return int(v) if isinstance(v, int) and not isinstance(v, bool) or (isinstance(v, str) and v.isdigit()) else None
+        return int(v) if isinstance(v, int) and not isinstance(v, bool) or (_strict.is_ascii_digits(v)) else None
     lim = place.get("limits") or t.get("limits")
     d, so = t.get("durationMs"), t.get("subOrders")
     if isinstance(lim, dict):

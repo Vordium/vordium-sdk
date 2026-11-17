@@ -85,7 +85,7 @@ from .units import OrderValueError, SpecsUnavailable, NO_RULES
 from . import builder
 from .builder import BuilderOps, BuilderError, BuilderNotActive, ReferralLevel, referral_level
 
-__version__ = "1.6.0"
+__version__ = "1.6.1"
 __author__ = "Vordium"
 __all__ = [
     "Agent", "Wallet", "KeyFileError", "Chain", "Vordex",

@@ -42,7 +42,7 @@ def read_identity(status: Any) -> NodeIdentity:
         raise NetworkResolutionError("the node's /status is not an object; refusing to sign")
     cid = status.get("chain_id")
     g = status.get("genesis_sha256")
-    if isinstance(cid, str) and cid.strip().isdigit():
+    if isinstance(cid, str) and cid.strip().isascii() and cid.strip().isdigit():
         cid = int(cid)
     if isinstance(cid, bool) or not isinstance(cid, int) or cid <= 0:
         raise NetworkResolutionError("the node's /status names no chain id; refusing to sign")

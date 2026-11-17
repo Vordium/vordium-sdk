@@ -412,7 +412,8 @@ def test_the_specs_read_is_parsed_exactly_and_a_bad_rule_is_refused():
     with pytest.raises(units.SpecsUnavailable):
         REAL_FETCH("http://x", get=lambda p: (_ for _ in ()).throw(OSError("down")))
     with pytest.raises(mm.MMError):
-        mm.pair_specs({"specs": {"pairs": [{"pair": {"pair_id": 1}, "tick_8dec": "0.1", "lot_18dec": "1"}]}})
+        mm.pair_specs({"specs": {"min_order_notional_6dec": "10000000",
+                                 "pairs": [{"pair": {"pair_id": 1}, "tick_8dec": "0.1", "lot_18dec": "1"}]}})
 
 
 def test_floats_are_read_from_their_shortest_decimal_form():
@@ -430,3 +431,15 @@ def test_halves_trigger_up_and_leverage_to_even():
     assert units.snap_trigger_8dec(14_999_999, eth) == 10_000_000
     assert units.trigger_8dec("0.25", eth) == 30_000_000 and units.trigger_8dec(0.2499, eth) == 20_000_000
     assert units.leverage_bps("2.00005") == 20_000 and units.leverage_bps("2.00015") == 20_002
+
+
+def test_non_ascii_digits_are_refused():
+    """Python reads other scripts' digits as numbers: "1٠5" would be 105 (its middle digit looks like a dot)."""
+    import pytest
+    from vordium import units
+    sp = units.select(units.NO_RULES, 1)
+    for x in ("٣", "1٠5", "1５", "١٢.٥", "٣e2"):
+        with pytest.raises(units.OrderValueError):
+            units.size_18dec(x, sp)
+        with pytest.raises(units.OrderValueError):
+            units.price_8dec(x, sp, "buy")

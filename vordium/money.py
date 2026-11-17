@@ -50,6 +50,11 @@ class MoneyOpError(ValueError):
 def _addr(v: Any, what: str) -> str:
     if not isinstance(v, str) or not _ADDRESS.match(v):
         raise MoneyOpError(f"{what} is not an address")
+    from ._strict import address
+    try:
+        address(v, what)
+    except ValueError as e:
+        raise MoneyOpError(str(e)) from None
     return v.lower()
 
 
