@@ -10,14 +10,19 @@ pip install vordium
 
 ## Why this SDK is safe to point at a live chain
 
-- **Each named network is pinned.** The SDK carries the chain id and genesis sha256 of `mainnet` and `testnet`
-  (`vordium.PINS`) and builds every signing domain from that pin. Before anything is signed, `eth_chainId`, the network
-  spec and the node's `/status` must all report the pinned values; when one differs, reads still work (with a
-  `PinWarning`) but nothing is signed (`PinMismatch`, naming the network, the expected and the reported values). A new
-  genesis for a named network needs a new SDK release.
-- **Transport is discovered.** RPC, explorer and the Arbitrum bridge are resolved at runtime from the network spec.
-- **The deposit bridge is an allow-list of one.** The SDK accepts only the bridge address the live network spec
-  names at the moment you ask, and refuses every other address — and every address when the spec cannot be read.
+- **Each named network is held to a signed release record.** The network's chain id, genesis sha256 and deposit
+  bridge come from `releases.json`, and only when its detached OpenPGP signature (`releases.json.asc`) verifies under
+  the release key that ships in the SDK (fingerprint `C5EB4728F660369CE519D834B48FB4B71EFD48AE`). The SDK verifies the
+  signature itself (Ed25519, no other program, no key fetched). It refuses a record that is unsigned, signed by another
+  key, changed after signing, expired, or older than one it has seen, and any genesis other than the one the record
+  names for the network (`vordium.release_record`). While no record is served, the SDK's own pins apply (`vordium.PINS`).
+- **Every signing domain is built from that identity.** Before anything is signed, `eth_chainId`, the network spec and
+  the node's `/status` must all report it; when one differs, reads still work (with a `PinWarning`) but nothing is
+  signed (`PinMismatch`, naming the network, the expected and the reported values).
+- **Transport is discovered.** RPC and explorer are resolved at runtime from the network spec.
+- **The deposit bridge is an allow-list of one.** The SDK accepts only the bridge the signed release record names (or,
+  while no record is served, the one the live network spec names at the moment you ask), and refuses every other
+  address, and every address when neither can be read.
 - **EIP-712 domains are genesis-bound.** The VordCore domain salt is derived from
   the live `genesis_sha256`; if the node can't tell the SDK its genesis, the SDK
   refuses to sign rather than emit a digest the chain will reject.
@@ -54,7 +59,8 @@ serves:
 ```python
 from vordium import Pin, resolve_network, set_network
 
-set_network(resolve_network(rpc_url="https://node.example", network="mainnet"))   # held to the mainnet pin
+set_network(resolve_network(rpc_url="https://node.example", network="mainnet"))   # held to the mainnet identity
+set_network(resolve_network(rpc_url="https://node.example", network=777002))       # a chain the signed record lists
 set_network(resolve_network(rpc_url="https://node.example",                     # a network of your own
                             pin=Pin(chain_id=777001, genesis_sha256="<64 hex>")))
 ```
@@ -86,13 +92,13 @@ calls that aren't live yet return an "unavailable" result rather than inventing 
 
 ## Deposit bridge
 
-Deposits are made on Arbitrum, to the bridge the network spec names. Read it at the moment you use it, and check any
-address you were given against it:
+Deposits are made on Arbitrum, to the bridge the signed release record names (while no record is served, the one the
+network spec names). Read it at the moment you use it, and check any address you were given against it:
 
 ```python
 from vordium import current_bridge, require_current_bridge, BridgeRefused
 
-bridge = current_bridge()              # read from the live network spec now; raises BridgeRefused if it cannot be read
+bridge = current_bridge()              # from the signed record (else the live spec); raises BridgeRefused if it cannot be confirmed
 require_current_bridge(address)        # returns the address only if it is that bridge; raises BridgeRefused otherwise
 ```
 
@@ -103,7 +109,7 @@ before anything is signed when a read cannot be confirmed:
 ```python
 from vordium import bridge_v4 as bridge
 
-deployments = bridge.fetch_deployments()                   # the vault and its handler, as the network spec names them
+deployments = bridge.fetch_deployments()                   # the vault, its handler and USDC, as the signed record names them
 v = bridge.deployment_check(bridge.fetch_vaults(), deployments)
 gate = bridge.deposit_gate(v, 42161, deployments)           # deposits from Arbitrum: open right now?
 check = bridge.deposit_check(v, 42161, 25_000_000)          # 25 USDC from Arbitrum: may it be built?

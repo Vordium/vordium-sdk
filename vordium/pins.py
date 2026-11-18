@@ -4,8 +4,10 @@ These values are part of the SDK. Before anything is signed, the SDK compares th
 (``eth_chainId``, the node's ``/status`` and the network spec). When any of them differs, nothing is signed: a
 signature made under the wrong chain id or genesis would be valid on another chain.
 
-The EIP-712 domains are built from the pin, never from a value read off the network. A new genesis for a named
-network (a relaunch) therefore needs a new SDK release that carries the new pin.
+The EIP-712 domains are built from the pin, never from a value read off the network. When the signed release record
+is served (:mod:`vordium.release_record`: ``releases.json`` with its detached signature by the release key), a named
+network's genesis comes from that record instead, so a new genesis listed there needs no new SDK release. The pins here
+apply while no record is served.
 
 A network that is not named here can still be used: pass an explicit :class:`Pin` with its chain id and genesis
 (``resolve_network(rpc_url=..., pin=Pin(...))``), or set both ``VORDIUM_CHAIN_ID`` and ``VORDIUM_GENESIS_SHA256``.

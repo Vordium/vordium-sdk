@@ -80,6 +80,8 @@ def test_read_live_on_every_call_never_cached(monkeypatch):
     """A cached answer could outlive a change of bridge; each call reads the spec again."""
     reads = []
     monkeypatch.setattr(net, "_fetch_spec", lambda u, t: reads.append(u) or _spec(CURRENT))
+    net.get_network()           # the network is resolved once (it says whether a signed release record names the bridge)
+    reads.clear()
     config.ARBITRUM_BRIDGE
     config.require_current_bridge(CURRENT)
     assert len(reads) == 2

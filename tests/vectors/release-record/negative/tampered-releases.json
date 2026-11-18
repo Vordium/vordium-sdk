@@ -1,0 +1,37 @@
+{
+ "schema": "vordium.release-record/3",
+ "sequence": 2,
+ "issued_at": "2026-11-17T00:00:00Z",
+ "valid_until": "2026-12-17T00:00:00Z",
+ "networks": {
+  "101199": {
+   "name": "TEST devnet",
+   "chain_id": 101199,
+   "genesis_sha256": "3bab98d17e374eed971918a5bb83a5dc07c9665e1f43753443bc85369e58dcdf",
+   "bridge": {
+    "chain_id": 42161,
+    "vault": "0x0000000000000000000000000000000000000000",
+    "handler": "0x0000000000000000000000000000000000000000",
+    "usdc": "0x0000000000000000000000000000000000000000"
+   },
+   "retired_genesis": [
+    "2c1c0679fa6ab8358f1d3e8d294a8d1c73ac2e2caf9079f1216abedc3d9fdf4f"
+   ]
+  }
+ },
+ "current": "0000000000000000",
+ "releases": [
+  {
+   "sha16": "0000000000000000",
+   "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+   "network": "101199",
+   "genesis_sha256": "3bab98d17e374eed971918a5bb83a5dc07c9665e1f43753443bc85369e58dcdf",
+   "rollback": null,
+   "notes": "TEST fixture \u2014 not a release"
+  }
+ ],
+ "signing": {
+  "scheme": "OpenPGP detached signature (.asc) over the exact bytes of this file",
+  "key_fingerprint": "TEST-ONLY \u2014 see test-pub_key.asc; production pins C5EB4728F660369CE519D834B48FB4B71EFD48AE"
+ }
+}

@@ -70,6 +70,15 @@ def _offline_node(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_release_record(monkeypatch):
+    """Unit tests read no release record: none is served (the SDK's pins apply). The record tests serve their own."""
+    monkeypatch.setattr(net, "_read_record", lambda chain_id, urls, keys, timeout: None)
+    net._NAMED.clear()
+    yield
+    net._NAMED.clear()
+
+
+@pytest.fixture(autouse=True)
 def _nonce_state(monkeypatch, tmp_path):
     """Every test keeps its nonce marks in its own directory and reads no block time (a test that needs one passes
     ``chain_clock=``)."""

@@ -30,6 +30,7 @@ from .network import (
     signing_pin,
 )
 from .pins import PINS, Pin
+from . import release_record
 from .agent import Agent
 from .wallet import Wallet, KeyFileError
 from .chain import Chain
@@ -85,7 +86,7 @@ from .units import OrderValueError, SpecsUnavailable, NO_RULES
 from . import builder
 from .builder import BuilderOps, BuilderError, BuilderNotActive, ReferralLevel, referral_level
 
-__version__ = "1.6.1"
+__version__ = "1.6.2"
 __author__ = "Vordium"
 __all__ = [
     "Agent", "Wallet", "KeyFileError", "Chain", "Vordex",
@@ -113,8 +114,8 @@ __all__ = [
     "MarketMaker", "MMError", "Mmp", "Refusal", "Submitted", "NonceClock", "next_mmp_nonce", "pair_specs",
     "nonce_clock", "round_price", "round_size", "OpenOrder", "Position", "NetworkMismatch", "NodeDomain", "NodeIdentity",
     "node_identity",
-    # the pinned identity of each named network
-    "PINS", "Pin", "PinMismatch", "PinWarning", "UnpinnedNetwork", "signing_pin",
+    # the identity of each named network: the signed release record, else the pins
+    "release_record", "PINS", "Pin", "PinMismatch", "PinWarning", "UnpinnedNetwork", "signing_pin",
     "Feeds", "FeedError", "SeqTracker", "Book",
     # exact order units on each market's tick and lot
     "units", "OrderValueError", "SpecsUnavailable", "NO_RULES",

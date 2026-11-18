@@ -6,7 +6,8 @@ signature that is valid elsewhere. So the clients here build the domain from the
 
 * :func:`node_identity` reads the node's ``/status`` (its ``chain_id`` and ``genesis_sha256``; under the URL's own path
   first, then at the host root). A read without both is refused -- nothing is signed on a guess.
-* the identity is checked against the PIN of the network the client signs for (:mod:`vordium.pins`): the pin of a
+* the identity is checked against the PIN of the network the client signs for (for a named network, the genesis of
+  the signed release record when one is served, :mod:`vordium.release_record`; else :mod:`vordium.pins`): the pin of a
   ``network`` given to the client, else of a network set with :func:`vordium.network.set_network`, else of the
   network ``VORDIUM_NETWORK`` names, else both ``VORDIUM_CHAIN_ID`` and ``VORDIUM_GENESIS_SHA256``, else the pin of
   the named network whose address the client posts to. A node at any other address, with none of these, is never
@@ -27,7 +28,7 @@ from typing import Any, Callable, Optional
 
 from . import network as _net
 from .network import NetworkMismatch, NetworkResolutionError, PinMismatch, UnpinnedNetwork
-from .pins import PINS, Pin, differences, refusal
+from .pins import Pin, differences, refusal
 
 
 @dataclass(frozen=True)
@@ -82,7 +83,7 @@ def _known_endpoint(rpc_url: str) -> Optional[Pin]:
         for key in ("rpc", "api"):
             v = preset.get(key)
             if v and v.rstrip("/") == u:
-                return PINS[name]
+                return _net.named_pin(name)
     return None
 
 
@@ -93,9 +94,7 @@ def configured_pin(network: Optional["_net.Network"] = None, rpc_url: Optional[s
     if isinstance(network, Pin):
         return network, "the pin given to the client"
     if isinstance(network, str):
-        p = PINS.get(network.strip().lower())
-        if p is None:
-            raise NetworkResolutionError(f"unknown network {network!r}; known: {', '.join(sorted(PINS))}")
+        p = _net.named_pin(network)
         return p, f"the network named {p.name}"
     if network is not None:
         return _net.signing_pin(network), "the network given to the client"
@@ -105,9 +104,7 @@ def configured_pin(network: Optional["_net.Network"] = None, rpc_url: Optional[s
     cid, gen = _net._env_pin()
     named = os.getenv("VORDIUM_NETWORK")
     if named:
-        p = PINS.get(named.strip().lower())
-        if p is None:
-            raise NetworkResolutionError(f"unknown network {named!r}; known: {', '.join(sorted(PINS))}")
+        p = _net.named_pin(named)
         problems = differences(p, {"VORDIUM_CHAIN_ID": cid}, {"VORDIUM_GENESIS_SHA256": gen})
         if problems:
             raise PinMismatch(refusal(p, problems))

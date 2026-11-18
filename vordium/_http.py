@@ -74,16 +74,21 @@ def retry_wait(attempt: int, retry_after: Optional[str] = None, rand: Callable[[
 
 
 def get(url: str, *, timeout: float, headers: Optional[Dict[str, str]] = None, retries: int = GET_RETRIES,
-        sleep: Callable[[float], None] = time.sleep, rand: Callable[[], float] = random.random) -> requests.Response:
+        sleep: Callable[[float], None] = time.sleep, rand: Callable[[], float] = random.random,
+        stream: bool = False) -> requests.Response:
+    """A GET, retried as the module note says. ``stream``: the body is not read here (the caller reads it, and closes
+    the response)."""
     for attempt in range(retries + 1):
         try:
-            r = session().get(url, timeout=timeout, headers=headers)
+            r = session().get(url, timeout=timeout, headers=headers, **({"stream": True} if stream else {}))
         except (requests.ConnectionError, requests.Timeout):
             if attempt >= retries:
                 raise
             sleep(retry_wait(attempt, None, rand))
             continue
         if r.status_code in RETRY_STATUS and attempt < retries:
+            if stream:
+                r.close()
             sleep(retry_wait(attempt, r.headers.get("Retry-After"), rand))
             continue
         return r

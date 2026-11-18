@@ -1,5 +1,38 @@
 # Changelog
 
+## 1.6.2
+- A network's identity comes from the signed release record. `releases.json` (at
+  `https://binaries.vordium.com/<network>/releases.json`, and for the main network also `https://rpc.vordium.com/releases.json`)
+  names, for each network, its chain id, genesis sha256 and deposit bridge (vault, handler, USDC and their chain), with the
+  record's sequence, issue time and expiry, and the geneses it lists in `retired_genesis`. It is used only when its detached OpenPGP signature
+  (`releases.json.asc`, over the exact bytes served) verifies under the release key shipped in the SDK, fingerprint
+  `C5EB4728F660369CE519D834B48FB4B71EFD48AE`. The SDK verifies the signature itself: ASCII armour and its CRC-24, the
+  version 4 signature packet, its hashed subpackets and issuer fingerprint, and Ed25519 (RFC 8032), with no new
+  dependency and no other program (`vordium.release_record`).
+- The release key is pinned by its fingerprint. Its expiry is read from its own self-signature (the shipped key expires
+  2028-09-11). From 30 days before that expiry, the key is read again from where it is served (`KEY_URLS`: the
+  `release-key.asc` of github.com/Vordium/security and the `pub_key.asc` of github.com/Vordium/node), on every record read and at most every six hours (every 30 seconds while the key it has is
+  expired); a read that fails never takes back a later expiry. A
+  served copy is used only when it is the same key (same fingerprint and point) with a newer self-signature that verifies
+  under it, and only for its expiry; a revocation that verifies under the key refuses every record. A copy that cannot be read,
+  is another key or is older is skipped. A record is refused once the key has expired and no served copy gives a later
+  expiry, and so is a key with no self-signature that verifies. The record, its signature and the key are read no further
+  than their size limits.
+- A record is refused, with a plain sentence, when it is unsigned, its signature does not verify, it is signed by another
+  key, it has expired, its sequence is lower than the highest one seen on this computer for that network (kept next to
+  the nonce marks, file mode 0600), or it does not list the network. A node whose genesis the record lists in
+  `retired_genesis`, or does not name for the network, is never signed for. Values are read only from the verified bytes.
+- When the record is served, its genesis is the network's pin, so a new genesis listed in it needs no new SDK release.
+  While no record is served, the pins in `vordium.PINS` apply as before. Once a record for a network has been read on a
+  computer, signing for that network waits until a record is served again.
+- Signing and the deposit bridge use the record as it is at that moment: it is read again after five minutes
+  (`RECORD_TTL_S`), at once when it has expired, and a refused record is read again after 30 seconds (`RECORD_RETRY_S`).
+- With a record, the deposit bridge comes from it alone: `current_bridge()`, `require_current_bridge()`,
+  `bridge_v4.fetch_deployments()` and the deposit builders do not read the bridge from a network spec, and the vaults read
+  must name the record's USDC.
+- `resolve_network(network=<chain id>, rpc_url=...)` names a network that only the signed record lists. Clients given a
+  network name (`"mainnet"`, `VORDIUM_NETWORK`, or a named network's address) also take the record's genesis.
+
 ## 1.6.1
 - Redirects are never followed. A 3xx answer to a read, a signed write or the signing-phase read raises
   `RedirectRefused`, is not read as data and is not sent again. Web3 calls (balances, transfers) do not follow

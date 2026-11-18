@@ -740,12 +740,31 @@ def deployments_from_spec(spec: Any) -> Optional[Dict[str, Dict[str, str]]]:
     return {str(cid): {"vault": vault, "handler": handler, "setRules": create_address(vault, VAULT_CREATES["setRules"])}}
 
 
+def deployments_from_record(bridge: Any) -> Optional[Dict[str, Dict[str, str]]]:
+    """The deployed bridge contracts as the signed release record names them (:class:`vordium.release_record.Bridge`):
+    ``{chain id: {vault, handler, setRules, usdc}}``. The handler must be CREATE(vault, 1); None when it is not."""
+    vault, handler = getattr(bridge, "vault", None), getattr(bridge, "handler", None)
+    if not _is_addr(vault) or not _is_addr(handler) or create_address(vault, VAULT_CREATES["handler"]) != handler.lower():
+        return None
+    return {str(bridge.chain_id): {"vault": vault, "handler": handler, "usdc": bridge.usdc,
+                                   "setRules": create_address(vault, VAULT_CREATES["setRules"])}}
+
+
 def fetch_deployments(spec_url: Optional[str] = None, timeout: float = 6.0,
                       expected_bridge: Optional[str] = None) -> Optional[Dict[str, Dict[str, str]]]:
-    """``deployments_from_spec`` of the live network spec, read at the moment of the call (never cached). A spec named
-    only by VORDIUM_SPEC_URL is used only with ``expected_bridge``, and then every deployed vault it names must be that
-    address (:class:`vordium.network.BridgeRefused` otherwise)."""
-    from .network import BridgeRefused, deposit_spec_url, _fetch_spec
+    """The deployed bridge contracts. When the signed release record is served for the configured network they come
+    from it alone (``deployments_from_record``; the spec is not read). Else ``deployments_from_spec`` of the live
+    network spec, read at the moment of the call (never cached); a spec named only by VORDIUM_SPEC_URL is used only
+    with ``expected_bridge``. With ``expected_bridge`` every deployed vault must be that address
+    (:class:`vordium.network.BridgeRefused` otherwise)."""
+    from .network import BridgeRefused, deposit_spec_url, record_bridge, _fetch_spec
+    rb = record_bridge()
+    if rb is not None:
+        d = deployments_from_record(rb)
+        if d and expected_bridge is not None and str(expected_bridge).lower() != rb.vault:
+            raise BridgeRefused("the signed release record names another deposit vault than the expected bridge; "
+                                "nothing was built.")
+        return d
     url = deposit_spec_url(spec_url, expected_bridge)
     d = deployments_from_spec(_fetch_spec(url, timeout))
     if d and expected_bridge is not None:
@@ -780,8 +799,9 @@ def deposit_gate(v: Optional[VaultsRead], source_chain_id: Any, deployments: Opt
 
 
 def deployment_check(v: VaultsRead, deployments: Optional[Dict[str, Dict[str, str]]]) -> VaultsRead:
-    """The vaults read names the deployed contracts: on a chain the network spec names (``deployments``) every vault must
-    be that vault and its handler that handler, or the read is not used. No deployments read = the read is not used."""
+    """The vaults read names the deployed contracts: on a chain the deployments name (from the signed release record, or
+    the network spec) every vault must be that vault and its handler that handler, and, when the record names the USDC,
+    the handler's binding must name that USDC, or the read is not used. No deployments read = the read is not used."""
     if not v.ok:
         return v
     if not deployments:
@@ -794,6 +814,8 @@ def deployment_check(v: VaultsRead, deployments: Optional[Dict[str, Dict[str, st
             return VaultsRead(ok=False, error=f"the vault on chain {x.chain_id} is not the deployed one")
         if not x.handler or x.handler.lower() != d["handler"].lower():
             return VaultsRead(ok=False, error=f"the handler on chain {x.chain_id} is not the deployed one")
+        if d.get("usdc") and (not x.binding_usdc or x.binding_usdc.lower() != d["usdc"].lower()):
+            return VaultsRead(ok=False, error=f"the USDC on chain {x.chain_id} is not the one the release record names")
     return v
 
 

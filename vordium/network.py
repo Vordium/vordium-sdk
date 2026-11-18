@@ -5,7 +5,9 @@ stale, a resolved one cannot.
 
 Two DIFFERENT trust rules, because the two kinds of value fail differently:
 
-  TRANSPORT — rpc, ws, explorer, bridge address, native currency.
+  TRANSPORT — rpc, ws, explorer, native currency (and the bridge address
+      when no signed release record is served; with one, the bridge comes
+      from the record only).
       Derived from the canonical spec (``VORDIUM_SPEC_URL`` or
       https://rpc.vordium.com/network-spec.json). A bad transport value
       fails LOUDLY and HARMLESSLY: a bad RPC just won't connect.
@@ -13,9 +15,11 @@ Two DIFFERENT trust rules, because the two kinds of value fail differently:
   SIGNING DOMAIN — the EIP-712 ``chainId`` and the genesis-bound ``salt``.
       A mismatched signing domain is dangerous: it yields a VALID signature on
       ANOTHER chain (an attacker who controls the spec/RPC could harvest
-      signatures valid elsewhere). So every named network carries a PIN in the
-      SDK (:mod:`vordium.pins`: its chain id and genesis sha256), and the domain
-      is built from the pin. Every available source —
+      signatures valid elsewhere). So every named network is held to a PIN: its
+      chain id and genesis sha256 from the signed release record when one is
+      served (:mod:`vordium.release_record`), else the SDK's own
+      (:mod:`vordium.pins`), and the domain is built from the pin. Every
+      available source —
         * ``eth_chainId`` from the RPC you are actually sending to,
         * the spec's ``chainId`` and ``genesisSha256``,
         * the node's ``/status`` ``genesis_sha256``,
@@ -32,13 +36,16 @@ Two DIFFERENT trust rules, because the two kinds of value fail differently:
 from __future__ import annotations
 
 import os
+import re
+import time as _time
 import warnings
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Union
+from typing import Dict, Optional, Sequence, Union
 
 import requests
 from . import _http
 from .pins import PINS, Pin, differences, normalize_genesis, refusal
+from . import release_record as _rr
 
 # The endpoints we ASK — never an assumed chainId (chainId is always agreed).
 DEFAULT_SPEC_URL = "https://rpc.vordium.com/network-spec.json"
@@ -133,6 +140,20 @@ class Network:
     pin: Optional[Pin] = None
     # Why nothing may be signed for this network (a read value differs from the pin, or the endpoint has no pin).
     pin_problem: Optional[str] = None
+    # The signed release record this network was checked against (vordium.release_record), when one is served. Its
+    # genesis is the pin, and the deposit bridge comes from it. None when no record is served (the SDK's pin applies).
+    record: Optional["_rr.Verified"] = None
+    # Why the served release record cannot be used (unsigned, bad signature, another key, expired, older than one seen
+    # before, not listing this network). Nothing is signed, and the deposit bridge is not named, while it is set.
+    record_problem: Optional[str] = None
+    # Where the record is read again ((chain id, addresses, keys, timeout, named by chain id)), and the record as last
+    # read ([record, problem, monotonic time]): signing and the deposit bridge use the record as it is now (read again
+    # after RECORD_TTL_S, at once when it has expired, and a refused one after RECORD_RETRY_S).
+    record_source: Optional[tuple] = field(default=None, compare=False, repr=False)
+    record_live: Optional[list] = field(default=None, compare=False, repr=False)
+    # What every source reported at resolution ((chain ids, geneses, rpc)): a record that verifies later is held to
+    # all of them, as at resolution.
+    record_reports: Optional[tuple] = field(default=None, compare=False, repr=False)
 
 
 def api_base(net: "Network") -> str:
@@ -240,19 +261,47 @@ def _env_pin() -> "tuple[Optional[int], Optional[str]]":
     return cid, gen
 
 
+def _read_record(chain_id: int, urls, keys, timeout: float) -> "Optional[_rr.Verified]":
+    """The signed release record for ``chain_id`` (see :func:`vordium.release_record.read_record`). One function, so a
+    test can stand in for the network."""
+    return _rr.read_record(chain_id, urls, keys, timeout)
+
+
+def _record_chain_id(network) -> Optional[int]:
+    """A network named by its chain id (an int, or a string of digits), else None."""
+    if isinstance(network, bool):
+        return None
+    if isinstance(network, int):
+        return network if network > 0 else None
+    if isinstance(network, str) and re.fullmatch(r"[0-9]+", network.strip()):
+        n = int(network.strip())
+        return n if n > 0 else None
+    return None
+
+
 def resolve_network(rpc_url: Optional[str] = None,
                     spec_url: Optional[str] = None,
                     timeout: float = 6.0,
-                    network: Optional[str] = None,
-                    pin: Optional[Union[Pin, str]] = None) -> Network:
+                    network: Optional[Union[str, int]] = None,
+                    pin: Optional[Union[Pin, str]] = None,
+                    release_keys: Optional[Sequence[str]] = None,
+                    release_record_url: Optional[str] = None) -> Network:
     """Discover transport from the spec, resolve the chain id by AGREEMENT across every available source, and hold
-    what the network reports to its pin.
+    what the network reports to its identity.
 
     ``network`` names the network ("mainnet" — the default — or "testnet"; else VORDIUM_NETWORK). It chooses where
-    the SDK asks (see NETWORKS) and the pin it is held to (:data:`vordium.pins.PINS`). An explicit ``rpc_url`` (or
-    VORDIUM_RPC_URL) still wins for transport: that node is used for JSON-RPC and REST alike. Such an endpoint is
-    held to the pin of the network you name, or to ``pin`` (a :class:`~vordium.pins.Pin`, or a network name), or to
-    ``VORDIUM_CHAIN_ID`` + ``VORDIUM_GENESIS_SHA256``; with none of them it is read but never signed for.
+    the SDK asks (see NETWORKS) and the identity it is held to. That identity comes from the signed release record
+    (:mod:`vordium.release_record`): when the record is served and verifies under the release key, its genesis for the
+    network's chain id is the pin, and its deposit bridge is the bridge. When no record is served, the SDK's own pin
+    applies (:data:`vordium.pins.PINS`). ``network`` may also be a chain id (with ``rpc_url``): a network that only the
+    signed record names; nothing is signed for it without a record that lists it.
+
+    An explicit ``rpc_url`` (or VORDIUM_RPC_URL) still wins for transport: that node is used for JSON-RPC and REST
+    alike. Such an endpoint is held to the network you name, or to ``pin`` (a :class:`~vordium.pins.Pin`, or a network
+    name), or to ``VORDIUM_CHAIN_ID`` + ``VORDIUM_GENESIS_SHA256``; with none of them it is read but never signed for.
+
+    ``release_keys`` (armoured OpenPGP public keys) and ``release_record_url`` are for tests only: they replace the
+    shipped release key and the record's address.
 
     A read value that differs from the pin does not stop reads (a :class:`PinWarning` is issued); it stops signing
     (:func:`signing_pin` raises :class:`PinMismatch`)."""
@@ -264,17 +313,34 @@ def resolve_network(rpc_url: Optional[str] = None,
         if network and str(network).strip().lower() != pin.strip().lower():
             raise NetworkResolutionError(f"network {network!r} and pin {pin!r} name different networks")
         network, pin = pin, None
-    named = network or os.getenv("VORDIUM_NETWORK") or None
-    if not named and custom_rpc and pin is None:
+    by_chain = _record_chain_id(network)
+    if by_chain is not None:
+        named_by_id = next((k for k, p in PINS.items() if p.chain_id == by_chain), None)
+        if named_by_id is not None:
+            network, by_chain = named_by_id, None
+        elif not custom_rpc:
+            raise NetworkResolutionError(f"network {by_chain} is named by its chain id; give its rpc_url too")
+        elif pin is not None:
+            raise NetworkResolutionError("a network named by its chain id takes its identity from the signed release "
+                                         "record; do not pass pin= as well")
+    named = (None if by_chain is not None else network) or (os.getenv("VORDIUM_NETWORK") if by_chain is None else None) or None
+    if not named and by_chain is None and custom_rpc and pin is None:
         # an address that IS a named network's own JSON-RPC or REST base names that network
         for key, pre in NETWORKS.items():
             if custom_rpc.rstrip("/") in {(pre.get(k) or "").rstrip("/") for k in ("rpc", "api") if pre.get(k)}:
                 named = key
-    name = str(named).strip().lower() if named else ("mainnet" if not custom_rpc or pin is not None else None)
+    if by_chain is not None:
+        name = None
+    else:
+        name = str(named).strip().lower() if named else ("mainnet" if not custom_rpc or pin is not None else None)
     preset = _preset(name or "mainnet")
-    # The pin this network is held to: the one passed, else the named network's, else both environment values.
+    # The pin this network is held to: the one passed, else the named network's (from the signed record when one is
+    # served, else the SDK's own), else both environment values.
     held: Optional[Pin] = None
     pin_problem: Optional[str] = None
+    record: Optional[_rr.Verified] = None
+    record_problem: Optional[str] = None
+    record_cid: Optional[int] = None
     if pin is not None:
         if not isinstance(pin, Pin):
             raise NetworkResolutionError("pin must be a vordium.pins.Pin or a network name")
@@ -284,14 +350,38 @@ def resolve_network(rpc_url: Optional[str] = None,
                                          f"{PINS[name].genesis_sha256}); pass one or the other")
         if not named:
             name = None
+    elif by_chain is not None:
+        record_cid = by_chain
     elif name is not None:
         held = PINS.get(name)
+        record_cid = held.chain_id if held is not None else None
     elif env_cid is not None and env_gen is not None:
         held = Pin(env_cid, env_gen)
     else:
         pin_problem = (f"Refusing to sign: the endpoint {custom_rpc} is not a named network and has no pin. Say which "
                        "network it serves (network=\"mainnet\" or \"testnet\"), or pass pin=Pin(chain_id, "
                        "genesis_sha256), or set both VORDIUM_CHAIN_ID and VORDIUM_GENESIS_SHA256. Nothing was signed.")
+    record_source: Optional[tuple] = None
+    if record_cid is not None:
+        if release_record_url:
+            urls: tuple = (release_record_url,)
+        elif by_chain is not None:                         # a chain only the record names: every record address
+            urls = tuple(u for v in _rr.RECORD_URLS.values() for u in v)
+        else:
+            urls = _rr.RECORD_URLS.get(name or "", ())
+        try:
+            keys = _rr.pinned_keys(release_keys)
+            record_source = (record_cid, urls, keys, timeout, by_chain is not None)
+            record = _read_record(record_cid, urls, keys, timeout)
+        except _rr.RecordRefused as e:
+            record_problem = f"{e} Nothing was signed."
+        if record is not None:
+            held = Pin(record_cid, record.entry.genesis_sha256, name)
+        elif by_chain is not None and record_problem is None:
+            record_problem = (f"Refusing to sign: no signed release record lists chain {by_chain}, and a network named "
+                              "only by its chain id needs one. Nothing was signed.")
+        if record_problem is not None:
+            pin_problem = record_problem
 
     if env_chain and not custom_rpc and not named:
         raise NetworkResolutionError(
@@ -382,8 +472,20 @@ def resolve_network(rpc_url: Optional[str] = None,
             problems.append(f"eth_chainId of {rpc} did not answer, expected {held.chain_id}")
         if genesis_sha256 is None:
             problems.append(f"the node's /status reports no genesis, expected {held.genesis_sha256}")
-        if problems:
+        if record is not None:
+            if genesis_sha256 is not None and genesis_sha256 in record.entry.retired_genesis:
+                problems.insert(0, f"the node serves genesis {genesis_sha256}, which the signed release record lists "
+                                   f"in retired_genesis for chain {record.entry.chain_id}")
+        if problems and record_problem is None:
             pin_problem = refusal(held, problems)
+    if record is not None:
+        # The deposit bridge comes from the signed record only; the spec's value is not used.
+        b = record.entry.bridge
+        if bridge_cid != b.chain_id:
+            bridge_chain = None
+        bridge_addr, bridge_cid = b.vault, b.chain_id
+    elif record_problem is not None:
+        bridge_addr = bridge_chain = bridge_cid = None
     if pin_problem:
         warnings.warn(pin_problem, PinWarning, stacklevel=2)
     return Network(
@@ -408,7 +510,109 @@ def resolve_network(rpc_url: Optional[str] = None,
         releases_url=releases_url,
         pin=held,
         pin_problem=pin_problem,
+        record=record,
+        record_problem=record_problem,
+        record_source=record_source,
+        record_reports=({"eth_chainId": onchain_cid, "the network spec": spec_chain_id, "VORDIUM_CHAIN_ID": env_cid},
+                        {"the node's /status": genesis_sha256, "the network spec": spec_genesis,
+                         "VORDIUM_GENESIS_SHA256": env_gen}, rpc) if record_source is not None else None,
+        record_live=[record, record_problem, _time.monotonic()] if record_source is not None else None,
     )
+
+
+#: How long a named network's record is reused by :func:`named_pin` before it is read again (seconds).
+NAMED_RECORD_TTL_S = 300.0
+_NAMED: Dict[str, tuple] = {}
+
+
+def named_pin(name: str, timeout: float = 6.0) -> Pin:
+    """The pin of a named network ("mainnet", "testnet") for a client that is given only the name: the genesis of the
+    signed release record when one is served (read again after NAMED_RECORD_TTL_S, and at once when it has expired),
+    else the SDK's own pin. Raises :class:`PinMismatch` while the served record cannot be used, and
+    :class:`NetworkResolutionError` for an unknown name."""
+    import time as _time
+    key = str(name).strip().lower()
+    hard = PINS.get(key)
+    if hard is None:
+        raise NetworkResolutionError(f"unknown network {name!r}; known: {', '.join(sorted(PINS))}")
+    hit = _NAMED.get(key)
+    mono = _time.monotonic()
+    if hit is not None and mono - hit[2] < NAMED_RECORD_TTL_S and (hit[3] is None or _rr._now() <= hit[3]):
+        pin, problem = hit[0], hit[1]
+    else:
+        pin, problem, until = hard, None, None
+        try:
+            rec = _read_record(hard.chain_id, _rr.RECORD_URLS.get(key, ()), _rr.pinned_keys(), timeout)
+            if rec is not None:
+                pin, until = Pin(hard.chain_id, rec.entry.genesis_sha256, key), rec.record.valid_until
+        except _rr.RecordRefused as e:
+            problem = f"{e} Nothing was signed."
+        _NAMED[key] = (pin, problem, mono, until)
+    if problem:
+        raise PinMismatch(problem)
+    return pin
+
+
+#: How long a network's release record is used before it is read again (seconds), and how soon a refused one is retried.
+RECORD_TTL_S = 300.0
+RECORD_RETRY_S = 30.0
+
+
+def record_now(net: Network) -> "tuple":
+    """``(record, problem)`` of ``net``'s release record as it is now: read again when it has expired, when it is older
+    than RECORD_TTL_S, or when it was refused more than RECORD_RETRY_S ago."""
+    live, src = net.record_live, net.record_source
+    rec, prob, at = live
+    age = _time.monotonic() - at
+    if ((rec is not None and (_rr._now() > rec.record.valid_until or age >= RECORD_TTL_S))
+            or (prob is not None and age >= RECORD_RETRY_S)):
+        chain, urls, keys, timeout, by_chain = src
+        try:
+            rec, prob = _read_record(chain, urls, keys, timeout), None
+        except _rr.RecordRefused as e:
+            rec, prob = None, f"{e} Nothing was signed."
+        if rec is None and prob is None and by_chain:
+            prob = (f"Refusing to sign: no signed release record lists chain {chain}, and a network named only by its "
+                    "chain id needs one. Nothing was signed.")
+        live[:] = [rec, prob, _time.monotonic()]
+    if rec is None and prob is None and net.record is not None:
+        prob = ("Refusing to sign: the signed release record this network was checked against is not served now. "
+                "Nothing was signed.")
+    return rec, prob
+
+
+def _record_signing_pin(net: Network) -> Optional[Pin]:
+    """The pin from ``net``'s release record as it is now (raises when it cannot be used), or None when no record is
+    served and none was used for ``net`` (then the SDK's own pin applies, as checked by the caller)."""
+    rec, prob = record_now(net)
+    if prob:
+        raise (UnpinnedNetwork if net.record_source[4] else PinMismatch)(prob)
+    if rec is None:
+        if net.record_problem is None:
+            return None                                    # no record, as at resolution: the caller's checks apply
+        if net.name not in PINS:
+            raise UnpinnedNetwork(net.record_problem)
+        pin = PINS[net.name]
+    else:
+        pin = Pin(rec.entry.chain_id, rec.entry.genesis_sha256, net.name)
+    g = normalize_genesis(getattr(net, "genesis_sha256", None))
+    same = net.record is not None and rec is not None and rec.entry.genesis_sha256 == net.record.entry.genesis_sha256
+    if same and net.pin_problem:                          # the record held; what the network reported did not
+        raise PinMismatch(net.pin_problem)
+    problems = differences(pin, {"the network": net.chain_id}, {"the network": g})
+    if g is None:
+        problems.append(f"the network reports no genesis, expected {pin.genesis_sha256}")
+    if not same and net.record_reports is not None:   # a record read after resolution: every source, as at resolution
+        cids, gens, rpc = net.record_reports
+        problems += [x for x in differences(pin, cids, gens) if x not in problems]
+        if cids.get("eth_chainId") is None:
+            problems.append(f"eth_chainId of {rpc} did not answer, expected {pin.chain_id}")
+    if rec is not None and g in rec.entry.retired_genesis:
+        problems.insert(0, f"the node serves genesis {g}, which the signed release record lists in retired_genesis "
+                           f"for chain {rec.entry.chain_id}")
+    if problems:
+        raise PinMismatch(refusal(pin, problems))
+    return pin
 
 
 def signing_pin(net: Optional[Network] = None) -> Pin:
@@ -417,6 +621,10 @@ def signing_pin(net: Optional[Network] = None) -> Pin:
     the pin; in both cases nothing may be signed. Every signing path in the SDK calls this first and builds its
     EIP-712 domain from the returned pin."""
     net = net if net is not None else get_network()
+    if getattr(net, "record_live", None) is not None:
+        live = _record_signing_pin(net)
+        if live is not None:
+            return live
     problem, pin, name = (getattr(net, "pin_problem", None), getattr(net, "pin", None), getattr(net, "name", None))
     if problem:
         raise (UnpinnedNetwork if pin is None else PinMismatch)(problem)
@@ -461,11 +669,51 @@ def deposit_spec_url(spec_url: Optional[str] = None, expected_bridge: Optional[s
     return default_spec_url()
 
 
+def record_bridge() -> "Optional[_rr.Bridge]":
+    """The deposit bridge the signed release record names for the configured network, or None when no record is
+    served for it (then the live network spec names the bridge). Raises :class:`BridgeRefused` while the served record
+    cannot be used, or when the network cannot be resolved."""
+    try:
+        net = get_network()
+    except NetworkResolutionError as e:
+        raise BridgeRefused(f"the network could not be resolved, so the deposit bridge cannot be confirmed ({e}).") from None
+    if getattr(net, "record_live", None) is None:
+        if getattr(net, "record_problem", None):
+            raise BridgeRefused(f"{net.record_problem} The deposit bridge is not named while the release record "
+                                "cannot be used.")
+        rec = getattr(net, "record", None)
+        return rec.entry.bridge if rec is not None else None
+    rec, prob = record_now(net)
+    if prob or (rec is None and net.record_problem):
+        raise BridgeRefused(f"{prob or net.record_problem} The deposit bridge is not named while the release record "
+                            "cannot be used.")
+    return rec.entry.bridge if rec is not None else None
+
+
+def _expected(expected_bridge: Optional[str]) -> Optional[str]:
+    if expected_bridge is None:
+        return None
+    from ._strict import address as _checked
+    try:
+        return _checked(expected_bridge, "the expected bridge").lower()
+    except ValueError as e:
+        raise BridgeRefused(f"{e}; nothing should be sent to it.") from None
+
+
 def current_bridge(spec_url: Optional[str] = None, timeout: float = 6.0, expected_bridge: Optional[str] = None) -> str:
-    """The deposit bridge address, read from the live network spec at the moment of the call (never cached). A spec
-    named only by VORDIUM_SPEC_URL is used only with ``expected_bridge`` (see :func:`deposit_spec_url`), and with
-    ``expected_bridge`` the spec must name exactly that address. Raises :class:`BridgeRefused` when the spec cannot be
-    read, names no valid address, or names another address than the one expected."""
+    """The deposit bridge address. When the signed release record is served for the configured network, it is the
+    record's vault (the spec is not read). Else it is read from the live network spec at the moment of the call (never
+    cached); a spec named only by VORDIUM_SPEC_URL is used only with ``expected_bridge`` (see
+    :func:`deposit_spec_url`). With ``expected_bridge`` the bridge must be exactly that address. Raises
+    :class:`BridgeRefused` when the record cannot be used, the spec cannot be read, names no valid address, or names
+    another address than the one expected."""
+    rb = record_bridge()
+    if rb is not None:
+        want = _expected(expected_bridge)
+        if want is not None and want != rb.vault:
+            raise BridgeRefused(f"the signed release record names {rb.vault} as the deposit bridge, not the expected "
+                                f"{want}; nothing should be sent to it.")
+        return rb.vault
     url = deposit_spec_url(spec_url, expected_bridge)
     spec = _fetch_spec(url, timeout)
     if not isinstance(spec, dict):
@@ -474,13 +722,7 @@ def current_bridge(spec_url: Optional[str] = None, timeout: float = 6.0, expecte
     addr = _address((spec.get("bridge") or {}).get("address"))
     if not addr:
         raise BridgeRefused("the network spec names no valid deposit bridge address; no address is returned.")
-    want = None
-    if expected_bridge is not None:
-        from ._strict import address as _checked
-        try:
-            want = _checked(expected_bridge, "the expected bridge").lower()
-        except ValueError as e:
-            raise BridgeRefused(f"{e}; nothing should be sent to it.") from None
+    want = _expected(expected_bridge)
     if expected_bridge is not None and addr != want:
         raise BridgeRefused(f"the network spec names {addr} as the deposit bridge, not the expected {want or expected_bridge!r}; "
                             "nothing should be sent to it.")
@@ -488,8 +730,9 @@ def current_bridge(spec_url: Optional[str] = None, timeout: float = 6.0, expecte
 
 
 def require_current_bridge(address: str, spec_url: Optional[str] = None, timeout: float = 6.0) -> str:
-    """Return ``address`` (lower-case) only when it is the deposit bridge the live network spec names right now.
-    Any other address — and any address at all when the spec cannot be read — raises :class:`BridgeRefused`."""
+    """Return ``address`` (lower-case) only when it is the deposit bridge right now: the one the signed release record
+    names, else (no record served) the one the live network spec names. Any other address, and any address at all
+    when neither can be read, raises :class:`BridgeRefused`."""
     given = _address(address)
     if not given:
         raise BridgeRefused(f"{address!r} is not an address; nothing should be sent to it.")
@@ -581,6 +824,7 @@ def require_message_pin(message: str, net: Optional[Network] = None) -> Pin:
 
 
 def reset_network() -> None:
-    """Drop the cached resolution (next access re-resolves)."""
+    """Drop the cached resolution (next access re-resolves), and the named networks' records."""
     global _current, _explicit
     _current, _explicit = None, False
+    _NAMED.clear()
