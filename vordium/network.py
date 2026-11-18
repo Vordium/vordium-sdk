@@ -94,6 +94,41 @@ class PinMismatch(NetworkMismatch):
 class UnpinnedNetwork(NetworkMismatch):
     """The endpoint is not a named network and carries no explicit pin. It can be read; nothing is signed for it."""
 
+    #: When the reason is the signed release record (a network named only by its chain id): its code, else None.
+    record_code: Optional[str] = None
+
+
+class RecordUnavailable(PinMismatch):
+    """The signed release record of the network cannot be used now, so nothing is signed. ``record_code`` names why:
+    ``expired``, ``rollback`` (an older sequence), ``not_served``, ``unsigned``, ``bad_signature``, ``not_listed``,
+    ``key_expired``, … (:class:`vordium.release_record.RecordRefused` codes). Retrying later can help for ``expired``
+    and ``not_served``; it is still a :class:`PinMismatch`."""
+
+    def __init__(self, message: str, record_code: Optional[str] = None):
+        super().__init__(message)
+        self.record_code = record_code
+
+
+class _RecordProblem(str):
+    """The text of a record problem, with its code (a str, so it is kept wherever the text is)."""
+    code: Optional[str] = None
+
+
+def _record_problem(text: str, code: Optional[str]) -> "_RecordProblem":
+    p = _RecordProblem(text if re.search(r"nothing (is|was) signed", text, re.I) else f"{text} Nothing was signed.")
+    p.code = code
+    return p
+
+
+def _refuse(problem: str, unpinned: bool = False) -> Exception:
+    """The error to raise for ``problem``: a record problem carries its code."""
+    code = getattr(problem, "code", None)
+    if unpinned:
+        e = UnpinnedNetwork(problem)
+        e.record_code = code
+        return e
+    return RecordUnavailable(problem, code) if code is not None else PinMismatch(problem)
+
 
 class PinWarning(UserWarning):
     """A read value differs from the network's pin. Reads continue; signing is refused."""
@@ -374,12 +409,13 @@ def resolve_network(rpc_url: Optional[str] = None,
             record_source = (record_cid, urls, keys, timeout, by_chain is not None)
             record = _read_record(record_cid, urls, keys, timeout)
         except _rr.RecordRefused as e:
-            record_problem = f"{e} Nothing was signed."
+            record_problem = _record_problem(str(e), e.code)
         if record is not None:
             held = Pin(record_cid, record.entry.genesis_sha256, name)
         elif by_chain is not None and record_problem is None:
-            record_problem = (f"Refusing to sign: no signed release record lists chain {by_chain}, and a network named "
-                              "only by its chain id needs one. Nothing was signed.")
+            record_problem = _record_problem(f"Refusing to sign: no signed release record lists chain {by_chain}, and a "
+                                             "network named only by its chain id needs one. Nothing was signed.",
+                                             "not_listed")
         if record_problem is not None:
             pin_problem = record_problem
 
@@ -478,6 +514,9 @@ def resolve_network(rpc_url: Optional[str] = None,
                                    f"in retired_genesis for chain {record.entry.chain_id}")
         if problems and record_problem is None:
             pin_problem = refusal(held, problems)
+            if record is None and record_cid is not None and any(" reports genesis " in x for x in problems):
+                pin_problem += (" The signed release record could not be read, so the SDK's own pin was used: if this "
+                                "network has moved to a new genesis, try again once the record can be read.")
     if record is not None:
         # The deposit bridge comes from the signed record only; the spec's value is not used.
         b = record.entry.bridge
@@ -546,10 +585,10 @@ def named_pin(name: str, timeout: float = 6.0) -> Pin:
             if rec is not None:
                 pin, until = Pin(hard.chain_id, rec.entry.genesis_sha256, key), rec.record.valid_until
         except _rr.RecordRefused as e:
-            problem = f"{e} Nothing was signed."
+            problem = _record_problem(str(e), e.code)
         _NAMED[key] = (pin, problem, mono, until)
     if problem:
-        raise PinMismatch(problem)
+        raise _refuse(problem)
     return pin
 
 
@@ -570,14 +609,14 @@ def record_now(net: Network) -> "tuple":
         try:
             rec, prob = _read_record(chain, urls, keys, timeout), None
         except _rr.RecordRefused as e:
-            rec, prob = None, f"{e} Nothing was signed."
+            rec, prob = None, _record_problem(str(e), e.code)
         if rec is None and prob is None and by_chain:
-            prob = (f"Refusing to sign: no signed release record lists chain {chain}, and a network named only by its "
-                    "chain id needs one. Nothing was signed.")
+            prob = _record_problem(f"Refusing to sign: no signed release record lists chain {chain}, and a network "
+                                   "named only by its chain id needs one. Nothing was signed.", "not_listed")
         live[:] = [rec, prob, _time.monotonic()]
     if rec is None and prob is None and net.record is not None:
-        prob = ("Refusing to sign: the signed release record this network was checked against is not served now. "
-                "Nothing was signed.")
+        prob = _record_problem("Refusing to sign: the signed release record this network was checked against is not "
+                               "served now. Nothing was signed.", "not_served")
     return rec, prob
 
 
@@ -586,12 +625,12 @@ def _record_signing_pin(net: Network) -> Optional[Pin]:
     served and none was used for ``net`` (then the SDK's own pin applies, as checked by the caller)."""
     rec, prob = record_now(net)
     if prob:
-        raise (UnpinnedNetwork if net.record_source[4] else PinMismatch)(prob)
+        raise _refuse(prob, unpinned=bool(net.record_source[4]))
     if rec is None:
         if net.record_problem is None:
             return None                                    # no record, as at resolution: the caller's checks apply
         if net.name not in PINS:
-            raise UnpinnedNetwork(net.record_problem)
+            raise _refuse(net.record_problem, unpinned=True)
         pin = PINS[net.name]
     else:
         pin = Pin(rec.entry.chain_id, rec.entry.genesis_sha256, net.name)
@@ -627,7 +666,7 @@ def signing_pin(net: Optional[Network] = None) -> Pin:
             return live
     problem, pin, name = (getattr(net, "pin_problem", None), getattr(net, "pin", None), getattr(net, "name", None))
     if problem:
-        raise (UnpinnedNetwork if pin is None else PinMismatch)(problem)
+        raise _refuse(problem, unpinned=pin is None)
     if pin is None and name is not None and name in PINS:
         pin = PINS[name]
     if pin is None:

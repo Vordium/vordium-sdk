@@ -88,3 +88,13 @@ def _nonce_state(monkeypatch, tmp_path):
     nonces._ALLOCATORS.clear()
     yield
     nonces._ALLOCATORS.clear()
+
+
+@pytest.fixture(autouse=True)
+def _outcome_clock(monkeypatch):
+    """Reading an outcome waits between reads: unit tests run it on a virtual clock (a wait moves the clock at once)."""
+    from vordium import outcome
+    now = [1000.0]
+    monkeypatch.setattr(outcome, "_clock", lambda: now[0])
+    monkeypatch.setattr(outcome, "_sleep", lambda s: now.__setitem__(0, now[0] + max(0.0, s)))
+    yield now

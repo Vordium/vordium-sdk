@@ -68,6 +68,8 @@ def _vx(monkeypatch, chain=None, **kw):
     vx = dex.Vordex(rpc_url="http://rpc.invalid", **kw)
     if chain is not None:
         monkeypatch.setattr(vx, "_get", lambda path: chain.listed(OWNER, 0) if path.startswith("/orders/") else {"events": []})
+        monkeypatch.setattr(vx, "_read", lambda path: (200, chain.listed(OWNER, 0) if path.startswith("/orders/")
+                                                       else {"events": []}))
     return vx
 
 
@@ -168,18 +170,23 @@ def test_delayed_first_copy_arriving_after_the_retry_is_still_one_effect(monkeyp
     assert len(chain.effects) == 1
 
 
-def test_no_answer_at_all_raises_delivery_unknown_unless_the_order_is_listed(monkeypatch):
+def test_no_answer_at_all_is_pending_until_the_node_lists_the_order(monkeypatch):
     def script(body, i):
         raise requests.ConnectionError("Connection aborted.")
     calls = _patch_post(monkeypatch, script)
     vx = dex.Vordex(rpc_url="http://rpc.invalid")
-    monkeypatch.setattr(vx, "order_by_client_nonce", lambda owner, n, signed=None: None)
-    with pytest.raises(nonces.DeliveryUnknown) as e:
-        vx.place_order(Account.create().key.hex(), OWNER, 1, dex.BUY, 1, 100, retries=3)
-    assert len(calls) == 3 and all(c is calls[0] for c in calls) and e.value.nonce == calls[0]["clientNonce"]
-    monkeypatch.setattr(vx, "order_by_client_nonce", lambda owner, n, signed=None: {"client_nonce": n, "source": "events"})
+    monkeypatch.setattr(vx, "_read", lambda path: (200, [] if path.startswith("/orders/") else {"events": []}))
+    out = vx.place_order(Account.create().key.hex(), OWNER, 1, dex.BUY, 1, 100, retries=3)
+    assert len(calls) == 3 and all(c is calls[0] for c in calls) and out["clientNonce"] == calls[0]["clientNonce"]
+    assert out["status"] == "unknown" and out["delivery_unknown"] is True and out["outcome"].state == "pending_checking"
+    assert out["pending"] is not None and out["outcome"].resend["allowed"] is False
+    listed = lambda path: (200, [{"client_nonce": calls[-1]["clientNonce"], "pair_id": 1, "side": "buy",
+                                  "size": calls[-1]["size_18dec"], "id": 5}] if path.startswith("/orders/")
+                           else {"events": []} if path.startswith("/events/") else {"chain_head": 9})
+    monkeypatch.setattr(vx, "_read", listed)
     out = vx.place_order(Account.create().key.hex(), OWNER, 1, dex.BUY, 1, 100)
-    assert out["already_received"] is True and out["status"] == "received" and out["found"]["source"] == "events"
+    assert out["already_received"] is True and out["status"] == "received" and out["found"]["source"] == "orders"
+    assert out["outcome"].state == "applied" and out["outcome"].read["route"].startswith("/orders/")
 
 
 def test_a_busy_gateway_is_waited_out_with_the_same_body(monkeypatch):
@@ -590,12 +597,16 @@ def test_after_a_rewind_an_older_order_on_a_reused_nonce_is_not_ours(monkeypatch
         return 400, {"code": "nonce", "error": "... or already used."}
     _patch_post(monkeypatch, script)
     vx = dex.Vordex(rpc_url="http://rpc.invalid", chain_clock=None)
-    rec = lambda ts: (lambda o, n, signed=None: {"client_nonce": n, **signed, "side": "buy", "timestamp_ms": ts})
-    monkeypatch.setattr(vx, "order_by_client_nonce", rec(now - 60_000))
+    sent = []
+    _patch_post(monkeypatch, lambda body, i: (sent.append(body), script(body, i))[1])
+    rec = lambda ts: (lambda path: (200, [{"client_nonce": sent[-1]["clientNonce"], "pair_id": 1, "side": "buy",
+                                           "size": sent[-1]["size_18dec"], "timestamp_ms": ts}])
+                      if path.startswith("/orders/") else (200, {"events": []}))
+    monkeypatch.setattr(vx, "_read", rec(now - 60_000))
     with pytest.warns(nonces.NonceStateWarning):
         out = vx.place_order(Account.create().key.hex(), OWNER, 1, dex.BUY, 1, 100)
     assert out["status"] == "unknown"
-    monkeypatch.setattr(vx, "order_by_client_nonce", rec(now + 60_000))
+    monkeypatch.setattr(vx, "_read", rec(now + 60_000))
     out = vx.place_order(Account.create().key.hex(), OWNER, 1, dex.BUY, 1, 100)
     assert out["status"] == "received"
 
@@ -611,19 +622,24 @@ def test_a_cancel_whose_first_copy_landed_is_done_not_refused(monkeypatch):     
     _patch_post(monkeypatch, lambda body, i: (_ for _ in ()).throw(requests.ReadTimeout("lost")) if i % 2 == 1
                 else (400, {"code": "order_not_found", "error": "order not open"}))
     vx = dex.Vordex(rpc_url="http://rpc.invalid", chain_clock=None)
-    records = {"events": [{"kind": "order_closed", "order_id": 77, "status": "cancelled"}]}
-    monkeypatch.setattr(vx, "_get", lambda path: records if path.startswith("/events/") else [])   # no longer resting
+    st = {"records": {"events": [{"kind": "order_closed", "order_id": 77, "status": "cancelled", "height": 5}]},
+          "orders": []}
+    monkeypatch.setattr(vx, "_read", lambda path: (200, st["records"] if path.startswith("/events/") else st["orders"]))
     out = vx.cancel_order(Account.create().key.hex(), OWNER, 77)
     assert out["status"] == "done" and out["order_gone"] is True and out["status_code"] is None
-    records = {"events": [{"kind": "order_closed", "order_id": 77, "status": "filled"}]}           # it filled first
+    assert out["outcome"].text == "Cancelled. The order is off the book."
+    st["records"] = {"events": [{"kind": "order_closed", "order_id": 77, "status": "filled"}]}           # it filled first
     out = vx.cancel_order(Account.create().key.hex(), OWNER, 77)
-    assert out["status"] == "filled" and out["already_received"] is False and "check your position" in out["detail"]
-    records = {"events": []}                                                                      # gone, no record yet
+    assert out["status"] == "filled" and out["already_received"] is False and out["outcome"].next == "Check your position."
+    st["records"] = {"events": []}                                                                      # gone, no record yet
     out = vx.cancel_order(Account.create().key.hex(), OWNER, 77)
-    assert out["status"] == "unknown" and "filled or cancelled" in out["detail"]
-    monkeypatch.setattr(vx, "_get", lambda path: [{"id": 77, "client_nonce": 1}])      # still resting
+    assert out["status"] == "unknown" and out["outcome"].state == "pending_checking"
+    assert "cancelled or filled" in out["pending"].wait().text                                      # after the limit
+    st["orders"] = [{"id": 77, "client_nonce": 1}]                                                      # still resting
     out = vx.cancel_order(Account.create().key.hex(), OWNER, 77)
     assert out["status"] == "unknown" and out["delivery_unknown"] is True
+    assert out["outcome"].resend == {"allowed": True, "same_bytes": True, "label": "Send the same cancel again",
+                                     "why": "applies_once"}
 
 
 def test_a_cancel_answered_5xx_with_a_code_after_a_lost_answer_is_unknown(monkeypatch):
@@ -631,7 +647,7 @@ def test_a_cancel_answered_5xx_with_a_code_after_a_lost_answer_is_unknown(monkey
     _patch_post(monkeypatch, lambda body, i: (_ for _ in ()).throw(requests.ReadTimeout("lost")) if i == 1
                 else (500, {"code": "internal", "error": "x"}))
     vx = dex.Vordex(rpc_url="http://rpc.invalid", chain_clock=None)
-    monkeypatch.setattr(vx, "_get", lambda path: (_ for _ in ()).throw(requests.ConnectionError("down")))
+    monkeypatch.setattr(vx, "_read", lambda path: (_ for _ in ()).throw(requests.ConnectionError("down")))
     out = vx.cancel_order(Account.create().key.hex(), OWNER, 77)
     assert out["status"] == "unknown" and out.get("code") is None
 

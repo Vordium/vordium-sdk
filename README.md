@@ -220,6 +220,26 @@ network whose address the client posts to. When the node serves another network,
 A 202 answer means the request was accepted for the next block; read the result from your orders, fills or the feeds.
 Prices are 8-decimal integers, sizes 18-decimal integers and USDC amounts 6-decimal integers.
 
+### When the answer is lost
+
+A write carries no receipt, so when its answer is lost (a timeout, a dropped connection, a gateway error) the SDK reads
+the node it sent the write to — never an explorer — until the state shows what happened, for up to 30 s inside the call
+(`settle_s`; 0 returns at once) and up to 2 minutes in all. The answer then carries `outcome`:
+
+```python
+out = Vordex().place_order(session_key, owner, 1, BUY, "0.01", "2000")
+o = out.get("outcome")
+if o is not None:
+    print(o.state, o.text, o.next)          # pending_checking · applied · refused · not_applied · still_unknown
+    if out["pending"] is not None:
+        o = out["pending"].wait()           # keep reading to the 2-minute limit
+```
+
+Only the same signed bytes are ever sent again: an order is never signed twice for one intent; a cancel,
+`AccountOps.revoke_agent()` and `AccountOps.stop_all()` offer `pending.resend_same()`; `MarketMaker.cancel_all()` and
+`MarketMaker.batch()` are never sent again. `vordium.pending()` lists the writes of this computer whose outcome is not
+known yet; `vordium.pending(check=True)` reads each once.
+
 ## Builder codes
 
 An app or bot that sends orders for traders (a *builder*) can add its own fee to those orders, up to what each trader

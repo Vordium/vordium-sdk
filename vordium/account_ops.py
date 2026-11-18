@@ -43,6 +43,13 @@ PLACE_TWAP: List[Tuple[str, str]] = [
 CANCEL_TWAP: List[Tuple[str, str]] = [("owner", "address"), ("twapId", "uint64"), ("clientNonce", "uint64")]
 SET_MARGIN_MODE: List[Tuple[str, str]] = [("owner", "address"), ("pairId", "uint32"), ("mode", "uint8"), ("nonce", "uint64")]
 
+REVOKE_AGENT: List[Tuple[str, str]] = [("owner", "address"), ("agent", "address"), ("nonce", "uint64")]
+#: One owner signature that stops, on the chain, the account's trading key and every one of its agents (VordexSession
+#: domain). ``validUntil`` (unix seconds) is at most 300 s after block time: the same bytes can never act later.
+STOP_ALL_SIGNERS: List[Tuple[str, str]] = [("owner", "address"), ("nonce", "uint256"), ("validUntil", "uint256")]
+#: Seconds ahead a stop's deadline is set (the chain takes at most 300).
+STOP_ALL_AHEAD_S = 120
+
 SET_MARGIN_MODE_TYPEHASH = "0xe21cb7097749ae53e743c95bbe6143cd2dc1917e7504598a32a6f5062f7ebc3d"   # published (op 150)
 MODE_CODE = {"cross": 1, "isolated": 2}
 SESSION_MAX_SECONDS = 90 * 86400 - 3600
@@ -231,6 +238,11 @@ class Result:
     status_code: int
     answer: Any
     detail: str = ""
+    #: For :meth:`AccountOps.revoke_agent` and :meth:`AccountOps.stop_all`: what the node's reads made of it
+    #: (:class:`vordium.outcome.Outcome`; None when nothing was signed or sent), and, while that is not final, the
+    #: :class:`vordium.outcome.PendingWrite` that goes on reading (``resend_same()`` sends the same signed bytes).
+    outcome: Any = None
+    pending: Any = None
 
 
 class AccountOps:
@@ -451,3 +463,121 @@ class AccountOps:
                                            {"owner": self.owner, "pairId": pair_id, "mode": MODE_CODE[mode], "nonce": n}))
         code, ans = self._post("/margin/mode", margin_mode_body(self.owner, pair_id, MODE_CODE[mode], n, sig), dedup=False)
         return self._outcome(code, ans, lambda: self.mode_of(pair_id) == mode, wait_s, "the chain does not show the new mode")
+
+    # agent revoke and the stop (owner key; outcome read from the node)
+    def _refused_outcome(self, action: str, code: Any, ans: Any, digest: str, meta: Dict[str, Any]) -> "Result":
+        from . import outcome as _oc
+        a = ans if isinstance(ans, dict) else {}
+        c = str(a.get("code") or a.get("reason") or (f"http_{code}" if code else "refused"))
+        meaning = a.get("meaning") or a.get("error") or a.get("reason") or "the network refused it"
+        text, nxt = _oc.say(action, "refused", meaning=_oc.clause(meaning), action="")
+        o = _oc.Outcome(action, "refused", text, nxt, False, {"code": c, "meaning": meaning, "action": None},
+                        {"source": "node", "route": None, "height": None, "at_ms": _oc._now_ms()},
+                        _oc.resend_rule(action, "refused"), meta.get("nonce"), None, meta.get("agent"), digest, 1)
+        return Result(False, code, ans, text, o, None)
+
+    def _checked(self, action: str, path: str, body: str, judge, settle_s: Optional[float], meta: Dict[str, Any],
+                 entry: Dict[str, Any]) -> "Result":
+        """Send the signed body (the same bytes on every copy) and read the node until it shows the effect: a 2xx is
+        a submission, not an application, so even then the state is ``pending_checking`` until the read shows it."""
+        from . import outcome as _oc
+        data = body.encode()
+        digest = _oc.body_digest(data)
+        jid = _oc.journal_add({**entry, "action": action, "owner": self.owner, "rest": self.rest,
+                               "sent_at_ms": _oc._now_ms(), "digest": digest})
+        try:
+            code, ans = self._post(path, body)
+        except BaseException:
+            _oc.journal_done(jid)
+            raise
+        if isinstance(ans, dict) and ans.get("status") == "not_sent":
+            _oc.journal_done(jid)
+            return Result(False, code, ans, "the network could not be reached: nothing was sent")
+        if not self._took(code, ans):
+            _oc.journal_done(jid)
+            return self._refused_outcome(action, code, ans, digest, meta)
+        pw = _oc.PendingWrite(action, judge, meta={**meta, "digest": digest, "attempts": 1},
+                              resend=lambda: self._post(path, body), journal_id=jid)
+        _oc.journal_set(jid, state="pending_checking")
+        o = _oc.settle(pw, _oc.SETTLE_S if settle_s is None else settle_s)
+        return Result(o.applied, code, ans, o.text, o, None if o.final else pw)
+
+    def revoke_agent(self, agent: str, settle_s: Optional[float] = None) -> Result:
+        """Revoke ``agent`` (RevokeAgent, signed once with the account's own key, its nonce above the chain's mark for
+        that agent). An agent the chain already lists as revoked is not signed for (``applied`` True). The revoke is
+        sent with the same bytes on a lost answer (the network applies it once) and is applied only when the agent's
+        committed record reads ``revoked``; the call reads for up to ``settle_s`` seconds (default 30; 0 returns at
+        once) and returns ``outcome`` (``state`` applied, refused, pending_checking or still_unknown) and, while it is
+        not final, ``pending``."""
+        from . import agent_ops as _ao
+        from . import nonces
+        from . import outcome as _oc
+        a = _strict.address(agent, "agent")
+        reads = _oc.NodeReads(self.rest)
+        held = reads.ok(f"/agents/{self.owner}/{a}")
+        if isinstance(held, dict) and str(held.get("status") or "").lower() == "revoked":
+            v = _oc.judge_revoke(reads, self.owner, a)
+            text, nxt = _oc.say("revoke", "applied", **v.fill)
+            o = _oc.Outcome("revoke", "applied", text, nxt, True, None, v.read, _oc.resend_rule("revoke", "applied"),
+                            None, None, a, None, 0, {k: x for k, x in v.fill.items() if isinstance(x, int)})
+            return Result(True, 0, None, "the agent is already revoked", o, None)
+        # above the chain's mark for this agent (GET /signers/{owner} agents[].last_nonce), else the allocator's
+        sg = reads.ok(f"/signers/{self.owner}")
+        mark = 0
+        for row in (sg.get("agents") if isinstance(sg, dict) else None) or []:
+            if isinstance(row, dict) and str(row.get("key") or "").lower() == a.lower():
+                mark = _oc._int(row.get("last_nonce")) or 0
+        n = nonces.fresh(nonces.allocator(self.owner, "account"), mark + 1, getattr(self, "_chain", None))
+        value = {"owner": self.owner, "agent": a, "nonce": n}
+        sig = sign_digest(self.key, digest(self.separator("VordCore"), "RevokeAgent", REVOKE_AGENT, value))
+        body = json.dumps(_ao.submit_body("RevokeAgent", value, sig), separators=(",", ":"))
+        return self._checked("revoke", "/submit", body, lambda: _oc.judge_revoke(reads, self.owner, a), settle_s,
+                             {"nonce": n, "agent": a}, {"nonce": n, "agent": a})
+
+    def takes_stop_all(self) -> Optional[bool]:
+        """Whether this network takes StopAllSigners, asked without signing: an empty body is refused as unreadable by a
+        network that has the route; a missing route (404 / 405) or ``not_in_force`` means it does not take it yet. None
+        when the network did not answer (not known)."""
+        from ._http import session
+        try:
+            r = session().post(f"{self.rest}/signers/stop-all", data=b"{}", headers={"Content-Type": "application/json"},
+                               timeout=min(float(self.timeout), 8.0))
+        except Exception:
+            return None
+        try:
+            j = r.json()
+        except ValueError:
+            j = {}
+        return r.status_code not in (404, 405) and not (isinstance(j, dict) and j.get("code") == "not_in_force")
+
+    def stop_all(self, settle_s: Optional[float] = None) -> Result:
+        """Stop, on the chain, this account's trading key and every one of its agents with ONE signature
+        (StopAllSigners, VordexSession domain, a deadline ``STOP_ALL_AHEAD_S`` seconds after block time, the session
+        nonce above the one the chain stored; the deadline is on this computer's clock when block time cannot be read).
+        It does not cancel resting orders. Nothing is signed where the network says it does not take it (``applied``
+        False, ``outcome`` None). A lost answer sends the same bytes again; the stop is
+        applied only when the node reads no trading key and no live agent (``applied_other`` when orders the wallet
+        placed itself stay open), not_applied once its deadline passed with a key or an agent still live. The call
+        reads for up to ``settle_s`` seconds (default 30; 0 returns at once)."""
+        from . import nonces
+        from . import outcome as _oc
+        if self.takes_stop_all() is False:              # not answered: the stop is still signed and sent
+            return Result(False, 0, None, "this network does not take Stop all signers yet: nothing was signed")
+        reads = _oc.NodeReads(self.rest)
+        # above the session nonce the chain stored (the session read names it, with or without a live session)
+        st, s = reads.get(f"/session/get?owner={self.owner}")
+        stored = _oc._stored_session_nonce(s) or 0
+        n = nonces.fresh(nonces.allocator(self.owner, "account"), stored + 1, getattr(self, "_chain", None))
+        now_s = None
+        try:
+            ms = self._chain() if getattr(self, "_chain", None) is not None else None
+            now_s = ms // 1000 if isinstance(ms, int) and ms > 0 else None
+        except Exception:
+            now_s = None
+        vu = (now_s if now_s is not None else int(time.time())) + STOP_ALL_AHEAD_S
+        value = {"owner": self.owner, "nonce": n, "validUntil": vu}
+        sig = sign_digest(self.key, digest(self.separator("VordexSession"), "StopAllSigners", STOP_ALL_SIGNERS, value))
+        body = json.dumps({"owner": self.owner, "nonce": n, "validUntil": vu, "signature": sig}, separators=(",", ":"))
+        chain = getattr(self, "_chain", None)
+        return self._checked("stop", "/signers/stop-all", body, lambda: _oc.judge_stop(reads, self.owner, vu, chain, n),
+                             settle_s, {"nonce": n}, {"nonce": n, "valid_until": vu})

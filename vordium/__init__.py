@@ -26,6 +26,7 @@ from .network import (
     NETWORKS,
     PinMismatch,
     PinWarning,
+    RecordUnavailable,
     UnpinnedNetwork,
     signing_pin,
 )
@@ -78,6 +79,10 @@ from .feeds import Feeds, FeedError, SeqTracker, Book
 from . import nonces
 from .nonces import NonceAllocator, ClockOutOfWindow, DeliveryUnknown, ChainClock
 
+# What a write whose answer was lost turned into, read from the node only.
+from . import outcome
+from .outcome import Outcome, PendingWrite, pending
+
 # Exact order units on each market's tick and lot.
 from . import units
 from .units import OrderValueError, SpecsUnavailable, NO_RULES
@@ -86,7 +91,7 @@ from .units import OrderValueError, SpecsUnavailable, NO_RULES
 from . import builder
 from .builder import BuilderOps, BuilderError, BuilderNotActive, ReferralLevel, referral_level
 
-__version__ = "1.6.2"
+__version__ = "1.7.0"
 __author__ = "Vordium"
 __all__ = [
     "Agent", "Wallet", "KeyFileError", "Chain", "Vordex",
@@ -115,12 +120,14 @@ __all__ = [
     "nonce_clock", "round_price", "round_size", "OpenOrder", "Position", "NetworkMismatch", "NodeDomain", "NodeIdentity",
     "node_identity",
     # the identity of each named network: the signed release record, else the pins
-    "release_record", "PINS", "Pin", "PinMismatch", "PinWarning", "UnpinnedNetwork", "signing_pin",
+    "release_record", "PINS", "Pin", "PinMismatch", "PinWarning", "RecordUnavailable", "UnpinnedNetwork", "signing_pin",
     "Feeds", "FeedError", "SeqTracker", "Book",
     # exact order units on each market's tick and lot
     "units", "OrderValueError", "SpecsUnavailable", "NO_RULES",
     # nonces and resends
     "nonces", "NonceAllocator", "ClockOutOfWindow", "DeliveryUnknown", "ChainClock",
+    # the outcome of a write whose answer was lost
+    "outcome", "Outcome", "PendingWrite", "pending",
     # builder codes and referral levels
     "builder", "BuilderOps", "BuilderError", "BuilderNotActive", "ReferralLevel", "referral_level",
 ]

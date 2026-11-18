@@ -57,6 +57,11 @@ RECORD_URLS: Dict[str, Tuple[str, ...]] = {
     "testnet": ("https://binaries.vordium.com/testnet/releases.json",),
 }
 
+#: The lowest record sequence this SDK release accepts for each chain id, also on a computer that has read no record yet
+#: (an empty state folder): the release process sets it to the sequence of the record served when the release is made.
+#: 0 = no floor. A floor above 0 also counts as a record already seen: while none is served, nothing is signed.
+MIN_SEQUENCE: Dict[int, int] = {101101: 0, 101102: 0}
+
 #: The record format this SDK reads.
 RECORD_SCHEMA = "vordium.release-record/3"
 
@@ -697,14 +702,33 @@ def _read_seq(path: Path) -> Optional[int]:
     return int(txt)
 
 
-def seen_sequence(fingerprint: str, chain_id: int) -> Optional[int]:
-    """The highest sequence of a verified record seen for ``chain_id`` on this computer (None when none)."""
+def _floor(chain_id: int) -> Optional[int]:
+    v = MIN_SEQUENCE.get(int(chain_id), 0)
+    return int(v) if isinstance(v, int) and not isinstance(v, bool) and v > 0 else None
+
+
+def _other_sdk_seq(path: Path) -> Optional[int]:
+    """The sequence the JavaScript SDK keeps in the same state folder (its file holds the sequence + 1; 0 = none). A
+    file that cannot be read is not counted here (that SDK refuses on it itself)."""
+    other = path.with_name(path.name.replace("release-record.", "release-record-mark.", 1))
+    try:
+        txt = other.read_text().strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+    return int(txt) - 1 if re.fullmatch(r"[0-9]+", txt) and int(txt) > 0 else None
+
+
+def seen_sequence(fingerprint: str, chain_id: int, with_floor: bool = True) -> Optional[int]:
+    """The highest sequence of a verified record seen for ``chain_id`` on this computer, by this SDK or the JavaScript
+    SDK in the same state folder, and (``with_floor``) at least this release's :data:`MIN_SEQUENCE` (None when none)."""
+    floor = _floor(chain_id) if with_floor else None
     key = f"{fingerprint}:{chain_id}"
     path = _state_path(fingerprint, chain_id)
     with _MEMORY_LOCK:
         mem = _MEMORY.get(key)
     if path is None:
-        return mem
+        vals = [v for v in (mem, floor) if v is not None]
+        return max(vals) if vals else None
     from .nonces import _file_lock
     try:
         with _file_lock(path.with_name(path.name + ".lock")):
@@ -712,7 +736,7 @@ def seen_sequence(fingerprint: str, chain_id: int) -> Optional[int]:
     except OSError as e:                                   # no lock (a folder that cannot be written): read it as is
         _state_warning(path, e)
         disk = _read_seq(path)
-    vals = [v for v in (mem, disk) if v is not None]
+    vals = [v for v in (mem, disk, _other_sdk_seq(path), floor) if v is not None]
     return max(vals) if vals else None
 
 
@@ -721,7 +745,16 @@ def accept_sequence(fingerprint: str, chain_id: int, sequence: int) -> None:
     key = f"{fingerprint}:{chain_id}"
     path = _state_path(fingerprint, chain_id)
 
+    floor = _floor(chain_id)
+    if floor is not None and sequence < floor:
+        raise RecordRefused("rollback", f"The signed release record for chain {chain_id} has sequence {sequence}, "
+                                        f"lower than sequence {floor}, the lowest this SDK release accepts: an older "
+                                        "record is being served. It is not used.")
+
     def check(last: Optional[int]) -> None:
+        if path is not None:
+            o = _other_sdk_seq(path)
+            last = o if last is None else (last if o is None else max(last, o))
         if last is not None and sequence < last:
             raise RecordRefused("rollback", f"The signed release record for chain {chain_id} has sequence {sequence}, "
                                             f"lower than sequence {last} already seen on this computer: an older record "
@@ -882,7 +915,8 @@ def read_record(chain_id: int, urls: Sequence[str], keys: Sequence[PublicKey], t
             if _now() > rec.valid_until:
                 raise RecordRefused("expired", f"The signed release record expired at "
                                                f"{datetime.fromtimestamp(rec.valid_until, timezone.utc):%Y-%m-%d %H:%M} "
-                                               "UTC. It is not used.")
+                                               "UTC. It is not used. Try again later; if this persists, check this "
+                                               "computer's clock.")
             entry = rec.networks.get(int(chain_id))
             if entry is None:
                 raise RecordRefused("not_listed", f"The signed release record does not list chain {chain_id}. Nothing "
@@ -896,6 +930,10 @@ def read_record(chain_id: int, urls: Sequence[str], keys: Sequence[PublicKey], t
         raise problem
     for k in keys:
         last = seen_sequence(k.fingerprint, chain_id)
+        if last is not None and seen_sequence(k.fingerprint, chain_id, with_floor=False) is None:
+            raise RecordRefused("not_served", f"No signed release record for chain {chain_id} is served now, and this "
+                                              f"SDK release needs one with sequence {last} or later. Nothing is signed "
+                                              "until it is served.")
         if last is not None:
             raise RecordRefused("not_served", f"No signed release record for chain {chain_id} is served now, though "
                                               f"one (sequence {last}) was read on this computer before. Nothing is "

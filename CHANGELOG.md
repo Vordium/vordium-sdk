@@ -1,5 +1,51 @@
 # Changelog
 
+## 1.7.0
+- When the answer to a write is lost (a timeout, a dropped connection, a gateway error, or a resent copy answered with
+  the nonce code), its outcome is read from the node the write was sent to, never from an explorer: committed state
+  first (the account's orders, an agent's record, the session and signers reads), then the node's own records for a
+  refusal and for filled versus cancelled. Reads come every second for 10 s, every 2 s to 30 s, then every 5 s, each
+  with a 6 s limit; a failed read counts as "not shown yet". Two minutes after the send an outcome nobody has shown is
+  `still_unknown`, never refused.
+- New `vordium.outcome`: `Outcome` (`action`, `state` = `pending_checking` / `applied` / `applied_other` / `refused` /
+  `not_applied` / `still_unknown`, one plain sentence in `text`, the next action in `next`, `applied` True / False /
+  None, `refusal`, the deciding `read` with route, height and time, `resend`, `attempts`, `digest`) and `PendingWrite`
+  (`check()`, `wait()`, `resend_same()`). The words come from one shared word file shipped as `vordium/outcome_words.json`.
+- Behaviour change: `Vordex.place_order` and `Vordex.cancel_order` wait up to `settle_s` seconds (default 30; 0 returns
+  at once) for that outcome inside the call, and their answers carry `outcome` and, while it is not final, `pending`. A
+  lost order answers `status` "unknown" (`delivery_unknown`), "received",
+  "refused" or "not_applied". `DeliveryUnknown` is raised only when no copy left this computer (`never_sent`).
+- `not_applied` is said only with proof: a write with a signed deadline (an order with a builder fee, the stop) whose
+  deadline passed on the network's clock while a full read of the account's records, with no snapshot gap inside it,
+  shows nothing. An order without a deadline is never called not applied.
+- `MarketMaker.cancel_all` reads the open orders first; it and `MarketMaker.batch` are still never sent again after a
+  lost answer, and now read the outcome for up to `settle_s` seconds: a cancel-all is applied only when none of the
+  orders listed before is still listed, each has its closing record and at least one closed as cancelled; a batch when
+  each placed order shows by its client nonce and each cancelled one (by id or by client nonce) is gone with its
+  closing record. `Submitted` gains `outcome` and `pending`.
+- A refusal is read only from a record of the same signer and market that does not name the nonce: an answer or record
+  naming the nonce may be about a later copy while an earlier one applied. `not_applied` also needs the node's records
+  to be written up to the head read just before them.
+- New owner writes: `AccountOps.revoke_agent(agent)` (RevokeAgent, its nonce above the chain's mark for that agent; an
+  agent already revoked is not signed for) and `AccountOps.stop_all()` (StopAllSigners, one signature that stops the
+  account's trading key and every agent, with a deadline 120 s after block time, or after this computer's clock when block time cannot
+  be read; nothing is signed where the network says it does not take it). Both send the same bytes again on a lost answer and are applied only when the node's reads show
+  the effect. `Result` gains `outcome` and `pending`.
+- A write sent through the SDK is noted, before it is sent, in a journal next to the nonce marks
+  (`outcome-pending.json`, file mode 0600) and taken off once its outcome is known. `vordium.pending()` lists what is
+  still open (for a day), and `vordium.pending(check=True)` reads each once at the node it was sent to.
+
+- The signed release record: each SDK release ships, per chain id, the lowest record sequence it accepts
+  (`vordium.release_record.MIN_SEQUENCE`, set when the release is made; 0 = none). An older record is refused also on a
+  computer that has read none, and a floor above 0 counts as a record already seen.
+- The highest record sequence seen is shared with the JavaScript SDK in the same state folder: each reads both marks and
+  is held to the higher, and writes its own.
+- A record that cannot be used raises `RecordUnavailable` (a `PinMismatch`) with `record_code` (`expired`, `rollback`,
+  `not_served`, `unsigned`, `bad_signature`, `not_listed`, …); a network named only by its chain id raises
+  `UnpinnedNetwork` with `record_code`. Each refusal says "Nothing was signed" once; an expired record adds "Try again
+  later; if this persists, check this computer's clock." When no record could be read and the node's genesis differs
+  from the SDK's own pin, the refusal says that the signed record could not be read.
+
 ## 1.6.2
 - A network's identity comes from the signed release record. `releases.json` (at
   `https://binaries.vordium.com/<network>/releases.json`, and for the main network also `https://rpc.vordium.com/releases.json`)

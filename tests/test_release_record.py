@@ -945,3 +945,92 @@ def test_a_cached_revocation_is_never_overwritten_by_a_failed_read(monkeypatch):
     monkeypatch.setattr(rr, "refresh_key", racing)
     assert rr.key_now(shipped).revoked
     assert rr._refreshed[shipped.fingerprint][1].revoked
+
+
+# ── the shipped floor, the other SDK's mark, the refusal code ───────────────────────────────────────────────────────
+def test_a_floor_shipped_with_the_release_refuses_an_older_record_on_a_fresh_install(monkeypatch):
+    keys = [SIGNER.public_armour()]
+    assert rr.MIN_SEQUENCE.get(101101) == 0 and rr.MIN_SEQUENCE.get(101102) == 0      # set by the release process
+    monkeypatch.setitem(rr.MIN_SEQUENCE, 101101, 10)
+    msg = refused("rollback", signed(record(seq=9)), chain=101101, keys=keys)          # an empty state folder
+    assert "sequence 9" in msg and "sequence 10" in msg and "lowest this SDK release accepts" in msg
+    # a floor above 0 counts as a record seen: while none is served, nothing is signed
+    msg = refused("not_served", Served({}), chain=101101, keys=keys)
+    assert "needs one with sequence 10 or later" in msg and "read on this computer" not in msg
+    assert read(signed(record(seq=10)), chain=101101, keys=keys)
+    rr._MEMORY.clear()
+    assert "read on this computer" in refused("not_served", Served({}), chain=101101, keys=keys)
+
+
+def test_the_javascript_sdks_mark_in_the_same_folder_is_held_to(monkeypatch):
+    from vordium import nonces
+    keys = [SIGNER.public_armour()]
+    d = nonces.state_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    fp = rr.pinned_keys(keys)[0].fingerprint[:16].lower()
+    (d / f"release-record-mark.{fp}.101101").write_text("11\n")                     # it read sequence 10
+    msg = refused("rollback", signed(record(seq=9)), chain=101101, keys=keys)
+    assert "sequence 10" in msg
+    assert rr.seen_sequence(rr.pinned_keys(keys)[0].fingerprint, 101101) == 10
+    read(signed(record(seq=12)), chain=101101, keys=keys)
+    assert (d / f"release-record.{fp}.101101").read_text().strip() == "12"          # each writes its own
+    assert (d / f"release-record-mark.{fp}.101101").read_text().strip() == "11"
+
+
+def test_an_expired_record_says_what_to_do():
+    import pytest as _p
+    rr._now  # noqa: B018
+    with _p.MonkeyPatch.context() as m:
+        m.setattr(rr, "_now", lambda: 1797465601)
+        msg = refused("expired", Served({URL: vec("releases.json"), URL + ".asc": vec("releases.json.asc")}))
+    assert msg.endswith("Try again later; if this persists, check this computer's clock.")
+
+
+def test_a_record_refusal_carries_its_code_and_is_still_a_pin_mismatch(monkeypatch):
+    def fail(chain_id, urls, keys, timeout):
+        raise rr.RecordRefused("not_served", "No signed release record for chain 101102 is served now, though one "
+                                             "(sequence 3) was read on this computer before. Nothing is signed until "
+                                             "it is served again.")
+    monkeypatch.setattr(net, "_read_record", fail)
+    net._NAMED.clear()
+    with pytest.raises(net.PinMismatch) as e:
+        net.named_pin("testnet")
+    assert isinstance(e.value, net.RecordUnavailable) and e.value.record_code == "not_served"
+    assert str(e.value).count("Nothing") == 1                                          # said once
+    net._NAMED.clear()
+
+
+def test_a_genesis_refusal_with_no_record_read_says_the_record_could_not_be_read(monkeypatch):
+    from vordium.pins import PINS
+    FakeNode(monkeypatch, PINS["testnet"].chain_id, NEW_GENESIS, Served({}))           # a moved node, no record served
+    n = resolve(rpc_url="https://node.invalid", network="testnet", release_keys=[SIGNER.public_armour()],
+                release_record_url=URL)
+    assert n.record is None and "The signed release record could not be read" in n.pin_problem
+    with pytest.raises(net.PinMismatch) as e:
+        net.signing_pin(n)
+    assert "could not be read" in str(e.value) and not isinstance(e.value, net.RecordUnavailable)
+
+
+def test_a_record_refused_at_resolution_names_its_code(monkeypatch):
+    from vordium.pins import PINS
+    FakeNode(monkeypatch, PINS["testnet"].chain_id, PINS["testnet"].genesis_sha256,
+             Served({URL: record(seq=1, chain=PINS["testnet"].chain_id)}))             # unsigned
+    n = resolve(rpc_url="https://node.invalid", network="testnet", release_keys=[SIGNER.public_armour()],
+                release_record_url=URL)
+    with pytest.raises(net.RecordUnavailable) as e:
+        net.signing_pin(n)
+    assert e.value.record_code == "unsigned" and str(e.value).count("Nothing") == 1
+
+
+def test_no_genesis_answer_adds_no_record_note(monkeypatch):
+    from vordium.pins import PINS
+    FakeNode(monkeypatch, PINS["testnet"].chain_id, None, Served({}))
+    monkeypatch.setattr(net, "_fetch_spec", lambda u, t: {"chainId": PINS["testnet"].chain_id})
+    n = resolve(rpc_url="https://node.invalid", network="testnet", release_keys=[SIGNER.public_armour()],
+                release_record_url=URL)
+    assert n.pin_problem and "could not be read" not in n.pin_problem
+
+
+def test_record_refusals_say_nothing_was_signed_once_also_for_state_files():
+    from vordium import network as N
+    assert str(N._record_problem("The stored sequence cannot be read; nothing was signed. Check the file.", "state")).lower().count("nothing") == 1

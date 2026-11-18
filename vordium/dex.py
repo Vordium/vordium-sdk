@@ -67,6 +67,9 @@ PRICED = (LIMIT, STOP_LIMIT)
 #: multiple of 100 — otherwise the chain rebuilds a different digest and the order is dropped.
 PRICE_STEP_8DEC = 100
 
+#: How long a write whose answer was lost is checked inside the call by default (seconds); see :mod:`vordium.outcome`.
+SETTLE_DEFAULT = 30.0
+
 #: Decimals for the signed uint64 price field.
 PRICE_DECIMALS = 8
 #: Decimals for the signed uint128 size field.
@@ -388,6 +391,7 @@ class Vordex:
         retries: int = 3,
         builder: Optional[Dict[str, Any]] = None,
         worst_price: Any = None,
+        settle_s: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Sign and submit an order.
 
@@ -408,12 +412,17 @@ class Vordex:
 
         The order is signed ONCE. A timeout, a lost connection or a busy gateway sends the same signed body again, up
         to ``retries`` copies in all; it never signs a new nonce. When a resent copy is answered with the nonce code, the
-        order is read back: if the network lists an order with this client nonce AND the signed market, side and size
-        or price, the answer is ``{"status": "received", "already_received": True, "found": ...}``; otherwise it is
-        ``{"status": "unknown", "delivery_unknown": True}`` (read the account's orders before sending a new one). Neither
-        carries an HTTP status (``status_code`` is None). When no copy is answered,
-        :class:`vordium.nonces.DeliveryUnknown` is raised unless the read-back finds the order. Every answer carries
-        ``clientNonce`` and ``attempts``.
+        outcome is read from the node (:mod:`vordium.outcome`): the account's orders by this client nonce AND the signed
+        market, side and size or price, then its records (placed, closed, refused). The call waits up to ``settle_s``
+        seconds for it (default :data:`vordium.outcome.SETTLE_S`, 30; 0 returns at once) and answers with
+        ``outcome`` (an :class:`vordium.outcome.Outcome`: ``state`` pending_checking, applied, refused, not_applied or
+        still_unknown, one plain sentence in ``text`` and the next action in ``next``) and, while it is not final,
+        ``pending`` (a :class:`vordium.outcome.PendingWrite`: ``check()``, ``wait()``). ``status`` is "received"
+        (``already_received`` True, ``found`` the order or its record), "refused", "not_applied" or "unknown"
+        (``delivery_unknown`` True: do not place it again; it may still apply). None of these carries an HTTP status
+        (``status_code`` is None). It is never signed again. When no copy left this machine,
+        :class:`vordium.nonces.DeliveryUnknown` is raised (``never_sent`` True: it certainly did not arrive). Every
+        answer carries ``clientNonce`` and ``attempts``.
 
         ``order_type`` is MARKET or LIMIT; stop orders are
         not available, and ``trigger_price`` / ``trigger_dir`` must stay 0
@@ -472,36 +481,54 @@ class Vordex:
         signed = {"pair_id": int(pair_id), "side": int(side), "size_18dec": int(size18),
                   "price_8dec": int(price8) if order_type in PRICED else None}
         rewound = getattr(nonce_clock(owner), "rewound_before", lambda n: None)(nonce)
-
-        def ours(found):
-            """A read-back counts only when it matches what was signed AND, when this nonce may have been handed out
-            before the mark was set back, it is newer than that."""
-            if found is None or rewound is None:
-                return found
-            ts = next((found.get(k) for k in ("timestamp_ms", "ts_ms", "time_ms") if isinstance(found.get(k), int)), None)
-            return found if ts is not None and ts > rewound else None
         base = {"clientNonce": nonce}
+        from . import outcome as _oc
+        # a PlaceOrderV3 carries a signed deadline: once it has passed on the network's clock, a full read that does
+        # not show the order proves it did not apply
+        valid_until = _num(body.get("validUntil")) if checked is not None else None
+        sent_at = _oc._now_ms()
+        digest = _oc.body_digest(_oc.json_bytes(body))
+        from eth_account import Account as _Acc
+        signer = _Acc.from_key(session_key).address
+        jid = _oc.journal_add({"action": "order", "owner": owner, "rest": self.rpc_url, "nonce": nonce, "signer": signer,
+                               "signed": signed, "rewound": rewound, "valid_until": valid_until,
+                               "sent_at_ms": sent_at, "digest": digest})
+
+        def lost(attempts: int, answer: Any = None) -> Dict[str, Any]:
+            # an earlier copy may have arrived and no 2xx came back (a lost answer, the nonce code - which also means
+            # "outside the window" or "used by another signer" -, a refusal of a later copy, a 5xx): the node's reads
+            # decide, and the order is ours only when it carries what was signed
+            reads = _oc.NodeReads(self.rpc_url, get=self._read)
+            who = _oc.SignerOf(reads, owner, signer, jid)     # an agent of the account or not, read once it answers
+
+            def judge():
+                known, agent = who()
+                if not known:
+                    return _oc.View()
+                return _oc.judge_order(reads, owner, nonce, signed, rewound, valid_until, sent_at,
+                                       getattr(self, "_chain", None), agent)
+            pw = _oc.PendingWrite("order", judge,
+                meta={"nonce": nonce, "digest": digest, "attempts": attempts}, journal_id=jid)
+            _oc.journal_set(jid, state="pending_checking", attempts=attempts)
+            o = _oc.settle(pw, SETTLE_DEFAULT if settle_s is None else settle_s)
+            status = {"applied": "received", "refused": "refused", "not_applied": "not_applied"}.get(o.state, "unknown")
+            found = getattr(pw, "found", None) if o.state == "applied" else None
+            return {**base, "status": status, "already_received": o.state == "applied", "found": found,
+                    "delivery_unknown": o.applied is None, "attempts": attempts, "status_code": None,
+                    "chain_answer": answer, "detail": o.text, "outcome": o, "pending": None if o.final else pw}
         try:
             sent = nonces.send_same(lambda: self._post_once("/order/place", body), attempts=retries, nonce=nonce)
         except nonces.DeliveryUnknown as e:
-            found = ours(self.order_by_client_nonce(owner, nonce, signed))
-            if found is None:
+            if e.never_sent:
+                _oc.journal_done(jid)
                 raise
-            return {**base, "status": "received", "already_received": True, "found": found, "attempts": e.attempts,
-                    "status_code": None}
+            return lost(e.attempts)
+        except BaseException:
+            _oc.journal_done(jid)
+            raise
         if sent.needs_read_back:
-            # an earlier copy may have arrived and the last answer is not a 2xx (the nonce code - which also means
-            # "outside the window" or "used by another signer" -, a refusal of a later copy, a 5xx): the order is ours
-            # only when the network lists it with what was signed
-            found = ours(self.order_by_client_nonce(owner, nonce, signed))
-            if found is not None:
-                return {**base, "status": "received", "already_received": True, "found": found,
-                        "attempts": sent.attempts, "status_code": None, "chain_answer": sent.answer}
-            return {**base, "status": "unknown", "already_received": False, "delivery_unknown": True, "found": None,
-                    "attempts": sent.attempts, "status_code": None, "chain_answer": sent.answer,
-                    "detail": "An earlier copy may have arrived (its answer was lost), the network answered "
-                              f"{sent.status_code}, and it does not list this order (yet). It may have arrived: read "
-                              "the account's orders before sending a new one."}
+            return lost(sent.attempts, sent.answer)
+        _oc.journal_done(jid)
         out: Dict[str, Any] = dict(sent.answer) if isinstance(sent.answer, dict) else {"answer": sent.answer}
         out.setdefault("status_code", sent.status_code)
         out["clientNonce"], out["attempts"] = nonce, sent.attempts
@@ -588,27 +615,64 @@ class Vordex:
             pass
         return None
 
-    def cancel_order(self, session_key: str, owner: str, order_id: int) -> Dict[str, Any]:
-        """Sign and submit a cancel for ``order_id``."""
+    def _read(self, path: str):
+        """One read of this node while an outcome is checked: (status, json), its own time limit, no retry."""
+        from .outcome import READ_TIMEOUT_S
+        r = _http.get(f"{self.rpc_url}{path}", timeout=min(float(self.timeout), READ_TIMEOUT_S), retries=0)
+        try:
+            j = r.json()
+        except ValueError:
+            j = None
+        return r.status_code, j
+
+    def cancel_order(self, session_key: str, owner: str, order_id: int, settle_s: Optional[float] = None) -> Dict[str, Any]:
+        """Sign and submit a cancel for ``order_id``.
+
+        A cancel carries no nonce and the network cancels an order once, so a timeout or a busy gateway sends the SAME
+        signed body again. When an earlier copy may have arrived and no 2xx came back, the outcome is read from the node
+        (the order no longer listed and its record: cancelled, or filled first) for up to ``settle_s`` seconds (default
+        30; 0 returns at once): ``status`` "done" (``already_received``), "filled" or "unknown", with ``outcome`` and,
+        while it is not final, ``pending`` (whose ``resend_same()`` sends the same signed cancel again)."""
         from eth_account import Account
 
         from . import nonces
+        from . import outcome as _oc
 
         signature = _sign_digest(session_key, self._digest(cancel_order_struct_hash(owner, order_id)))
         body = cancel_order_body(owner, Account.from_key(session_key).address, order_id, signature)
-        # a cancel carries no nonce; cancelling an order twice cancels it once, so a timeout sends the same body again.
+        digest = _oc.body_digest(_oc.json_bytes(body))
+        send = lambda: self._post_once("/order/cancel", body)
+        jid = _oc.journal_add({"action": "cancel", "owner": owner, "rest": self.rpc_url, "order_id": int(order_id),
+                               "sent_at_ms": _oc._now_ms(), "digest": digest})
+
+        def lost(attempts: int, answer: Any = None) -> Dict[str, Any]:
+            reads = _oc.NodeReads(self.rpc_url, get=self._read)
+            pw = _oc.PendingWrite("cancel", lambda: _oc.judge_cancel(reads, owner, int(order_id)),
+                                  meta={"order_id": int(order_id), "digest": digest, "attempts": attempts},
+                                  resend=send, journal_id=jid)
+            _oc.journal_set(jid, state="pending_checking", attempts=attempts)
+            o = _oc.settle(pw, SETTLE_DEFAULT if settle_s is None else settle_s)
+            status = {"applied": "done", "applied_other": "filled"}.get(o.state, "unknown")
+            return {"status": status, "status_code": None, "attempts": attempts, "chain_answer": answer,
+                    "order_id": int(order_id), "already_received": o.state == "applied",
+                    "order_gone": o.state in ("applied", "applied_other") or None,
+                    "delivery_unknown": o.applied is None, "detail": o.text, "outcome": o,
+                    "pending": None if o.final else pw}
         # When an earlier copy may have arrived, the answer to a later one ("not found", a 5xx) is about that later
-        # copy: the account's resting orders decide.
-        read = lambda: self._get(f"/orders/{owner}")
-        records = lambda: self._get(f"/events/account/{str(owner).lower()}?limit=50")
+        # copy: the node's reads decide.
         try:
-            sent = nonces.send_same(lambda: self._post_once("/order/cancel", body))
+            sent = nonces.send_same(send)
         except nonces.DeliveryUnknown as e:
             if e.never_sent:
+                _oc.journal_done(jid)
                 return {"status": "not_sent", "status_code": None, "attempts": e.attempts, "detail": str(e)}
-            return cancel_read_back(read, order_id, None, e.attempts, records)
+            return lost(e.attempts)
+        except BaseException:
+            _oc.journal_done(jid)
+            raise
         if sent.needs_read_back:
-            return cancel_read_back(read, order_id, sent.answer, sent.attempts, records)
+            return lost(sent.attempts, sent.answer)
+        _oc.journal_done(jid)
         out = dict(sent.answer) if isinstance(sent.answer, dict) else {"answer": sent.answer}
         out.setdefault("status_code", sent.status_code)
         return out

@@ -308,6 +308,10 @@ class Submitted:
     #: True when it is not known whether the network received the write (the answer was lost, and the write is not one
     #: the network applies once per nonce, so it was not sent again). ``ok`` is False: read committed state.
     unknown: bool = False
+    #: When it was not known: what the node's reads made of it (:class:`vordium.outcome.Outcome`), and, while that is not
+    #: final, the :class:`vordium.outcome.PendingWrite` that goes on reading.
+    outcome: Any = None
+    pending: Any = None
 
 
 def read_answer(status_code: Optional[int], j: Any, retry_after: Optional[str] = None) -> Submitted:
@@ -472,21 +476,105 @@ class MarketMaker:
         s = read_answer(sent.status_code, sent.answer, sent.retry_after)
         return Submitted(s.ok, s.status_code, s.refusal, s.actions, nonce, False, sent.attempts)
 
+    def _read(self, path: str):
+        """One read of this node while an outcome is checked: (status, json) with its own time limit and no retry (a
+        transport given to the client is used as it is); a failed read is (None, None)."""
+        try:
+            if getattr(self._get, "__func__", None) is MarketMaker._http_get:
+                from . import _http
+                from .outcome import READ_TIMEOUT_S
+                r = _http.get(self.rpc_url + path, timeout=min(float(self.timeout), READ_TIMEOUT_S), retries=0)
+                return r.status_code, r.json()
+            return 200, self._get(path)
+        except Exception:
+            return None, None
+
+    def _checked(self, s: Submitted, action: str, judge, settle_s: Optional[float], meta: Dict[str, Any],
+                 jid: Optional[str]) -> Submitted:
+        """A write whose answer was lost: never sent again (the network is not known to apply it once); the node's
+        reads decide, for up to ``settle_s`` seconds."""
+        from dataclasses import replace
+
+        from . import outcome as _oc
+        if not s.unknown:
+            _oc.journal_done(jid)
+            return s
+        pw = _oc.PendingWrite(action, judge, meta={**meta, "attempts": s.attempts}, journal_id=jid)
+        _oc.journal_set(jid, state="pending_checking", attempts=s.attempts)
+        o = _oc.settle(pw, _oc.SETTLE_S if settle_s is None else settle_s)
+        if o.applied is True:                                   # the node shows it applied: no refusal to report
+            return replace(s, ok=True, unknown=False, already_received=True, outcome=o, pending=None, refusal=None)
+        return replace(s, already_received=False, outcome=o, pending=None if o.final else pw,
+                       refusal=Refusal(s.refusal.code if s.refusal else "delivery_unknown", o.text))
+
     # writes
-    def batch(self, actions: Sequence[Action], nonce: Optional[int] = None, max_actions: int = BATCH_MAX) -> Submitted:
-        """Sign and submit 1..``max_actions`` actions in one batch. Cancels apply first, then each place on its own."""
+    def batch(self, actions: Sequence[Action], nonce: Optional[int] = None, max_actions: int = BATCH_MAX,
+              settle_s: Optional[float] = None) -> Submitted:
+        """Sign and submit 1..``max_actions`` actions in one batch. Cancels apply first, then each place on its own.
+
+        A batch is never sent again after a lost answer. Its outcome is then read from the node (each place by its
+        client nonce, each cancelled order no longer listed) for up to ``settle_s`` seconds (default 30; 0 returns at
+        once): ``outcome`` and, while it is not final, ``pending``."""
+        from . import outcome as _oc
         if not 1 <= len(actions) <= max_actions:
             raise MMError(f"a batch holds 1 to {max_actions} actions, not {len(actions)}")
         actions = self.on_steps(actions)
         n = nonce if nonce is not None else self._fresh()
         sig = self._sig(batch_struct_hash(self.owner, n, actions))
-        return self._send("/order/batch-signed", batch_body(self.owner, n, actions, sig), n)
+        body = batch_body(self.owner, n, actions, sig)
+        places = [(a.client_nonce, {"pair_id": a.pair_id, "side": a.side, "size_18dec": a.size_18dec,
+                                    "price_8dec": a.price_8dec or None})
+                  for a in actions if a.kind == PLACE]
+        cancels = [a.order_id for a in actions if a.kind == CANCEL]
+        cancel_nonces = [a.client_nonce for a in actions if a.kind == CANCEL_BY_CLIENT_NONCE]
+        digest = _oc.body_digest(_oc.json_bytes(body))
+        from eth_account import Account as _Acc
+        signer = _Acc.from_key(self._key).address
+        jid = _oc.journal_add({"action": "batch", "owner": self.owner, "rest": self.rpc_url, "nonce": n, "signer": signer,
+                               "places": places, "cancels": cancels, "cancel_nonces": cancel_nonces,
+                               "sent_at_ms": _oc._now_ms(), "digest": digest})
+        try:
+            s = self._send("/order/batch-signed", body, n)
+        except BaseException:
+            _oc.journal_done(jid)
+            raise
+        reads = _oc.NodeReads(self.rpc_url, get=self._read)
+        who = _oc.SignerOf(reads, self.owner, signer if places else None, jid)
 
-    def cancel_all(self, pair_id: int = 0, nonce: Optional[int] = None) -> Submitted:
-        """Cancel every open order on ``pair_id`` (0 = every pair)."""
+        def judge():
+            known, agent = who()
+            if not known:
+                return _oc.View()
+            return _oc.judge_batch(reads, self.owner, places, cancels, None, cancel_nonces, agent)
+        action = "order" if places else "cancel_all"
+        return self._checked(s, action, judge, settle_s,
+                             {"nonce": n, "digest": digest}, jid)
+
+    def cancel_all(self, pair_id: int = 0, nonce: Optional[int] = None, settle_s: Optional[float] = None) -> Submitted:
+        """Cancel every open order on ``pair_id`` (0 = every pair).
+
+        The open orders are read first. A cancel-all is never sent again after a lost answer (a late copy could cancel
+        orders placed after the first applied); its outcome is then read from the node -- none of the orders listed
+        before is still listed -- for up to ``settle_s`` seconds (default 30; 0 returns at once): ``outcome`` and, while
+        it is not final, ``pending``."""
+        from . import outcome as _oc
+        before = _oc._order_ids(self._read(f"/orders/{self.owner}")[1], pair_id)
         n = nonce if nonce is not None else self._fresh()
         sig = self._sig(cancel_all_struct_hash(self.owner, pair_id, n))
-        return self._send("/order/cancel-all", cancel_all_body(self.owner, pair_id, n, sig), n)
+        body = cancel_all_body(self.owner, pair_id, n, sig)
+        digest = _oc.body_digest(_oc.json_bytes(body))
+        jid = _oc.journal_add({"action": "cancel_all", "owner": self.owner, "rest": self.rpc_url, "nonce": n,
+                               "pair_id": int(pair_id), "before": before, "sent_at_ms": _oc._now_ms(),
+                               "digest": digest})
+        reads = _oc.NodeReads(self.rpc_url, get=self._read)
+        try:
+            sent = self._send("/order/cancel-all", body, n)
+        except BaseException:
+            _oc.journal_done(jid)
+            raise
+        return self._checked(sent, "cancel_all",
+                             lambda: _oc.judge_cancel_all(reads, self.owner, before, pair_id), settle_s,
+                             {"nonce": n, "digest": digest}, jid)
 
     def modify(self, order_id: int, new_price_8dec: int, new_size_18dec: int, client_nonce: Optional[int] = None,
                pair_id: Optional[int] = None, side: Optional[str] = None) -> Submitted:
